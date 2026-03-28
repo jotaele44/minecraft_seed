@@ -1,0 +1,24 @@
+SOURCE=SYNTHETIC (network unavailable; modeled from known geographic features)
+GENERATOR=tools/generate_synthetic_dem.py
+FILE=puerto_rico_official_dem.tif
+SIZE_BYTES=6575174
+CRS=EPSG:4326
+WIDTH=2048
+HEIGHT=802
+BOUNDS=(-67.3, 17.88, -65.59, 18.55)
+ELEV_MIN=1.48
+ELEV_MAX=1337.97
+NOTE=Coastline from cartographic reference points; elevation from Gaussian peaks at known locations
+NOTE=Replace with official NOAA CUDEM or USGS 3DEP DEM for production quality
+INPUT=puerto_rico_official_dem.tif
+CRS=EPSG:4326
+WIDTH=2048
+HEIGHT=802
+NODATA=-1.0
+BOUNDS=BoundingBox(left=-67.3, bottom=17.88, right=-65.59, top=18.55)
+MIN=1.5033
+MAX=1337.9680
+LAND_MAX=1337.9680
+OUTPUT_WIDTH=2033
+OUTPUT_HEIGHT=839
+OUTPUT_FILE=/home/user/minecraft_seed/PR_Minecraft_World/output/heightmap/puerto_rico_heightmap_2048.png

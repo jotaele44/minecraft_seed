@@ -1,0 +1,16 @@
+{
+  "input_raster": "/home/user/minecraft_seed/PR_Minecraft_World/data/raw/puerto_rico_official_dem.tif",
+  "source_min_m": 1.5033,
+  "source_max_m": 1337.968,
+  "land_max_m": 1337.968,
+  "output_width": 2033,
+  "output_height": 839,
+  "sea_level_block": 62,
+  "output_mode": "L",
+  "notes": [
+    "Underwater and nodata cells were forced to 0 baseline (ocean)",
+    "Land elevation normalized: 0 m \u2192 pixel 0, land_max_m \u2192 pixel 255",
+    "Output is 8-bit grayscale (mode L) without alpha channel",
+    "Designed for WorldPainter heightmap import with linear mapping"
+  ]
+}

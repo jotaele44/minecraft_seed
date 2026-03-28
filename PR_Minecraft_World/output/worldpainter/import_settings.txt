@@ -1,0 +1,34 @@
+WorldPainter Heightmap Import Settings
+======================================
+
+Heightmap file: output/heightmap/puerto_rico_heightmap_2048.png
+Format:         8-bit grayscale PNG (no alpha)
+Mapping:        Linear
+Smoothing:      DISABLED (uncheck 'smooth terrain' on import)
+Water level:    62 (Minecraft block height)
+World type:     Surface
+
+Import steps (WorldPainter GUI):
+  1. File > Import > Import Height Map...
+  2. Select: output/heightmap/puerto_rico_heightmap_2048.png
+  3. Verify 'Grayscale' is selected (not RGBA)
+  4. Set 'Maximum height' to 255 (or your preferred ceiling)
+  5. Set 'Water level' to 62
+  6. Uncheck 'Smooth terrain'
+  7. Leave scale as default (one pixel = one block)
+  8. Click Import
+
+Spawn recommendation:
+  Place spawn in the northeast quadrant (San Juan / Loíza area)
+  Ensure spawn is on solid land above water level 62
+  Use WorldPainter Spawn Point tool to confirm placement
+
+Export:
+  File > Export > Export as Minecraft world...
+  Choose Minecraft Java Edition format
+  Set seed to any value (terrain is heightmap-driven)
+
+If the import looks curved or distorted:
+  - Confirm PNG mode is L (grayscale, no alpha)
+  - Confirm Linear mapping is selected (not logarithmic)
+  - Re-import with Smooth terrain DISABLED
