@@ -2,16 +2,15 @@
 generate_synthetic_dem.py — Create a synthetic Puerto Rico DEM from known geographic
 features when official DEM sources are unavailable.
 
-This script produces a GeoTIFF that:
-  - Is georeferenced to the correct Puerto Rico lat/lon bounding box
-  - Has a realistic island coastline shape
-  - Approximates known elevation features (Cordillera Central, El Yunque, etc.)
-  - Can be processed by build_heightmap.py identically to an official DEM
+Produces a GeoTIFF that:
+  - Is georeferenced to the correct Puerto Rico lat/lon bounding box (WGS84)
+  - Has a realistic island coastline shape (34 cartographic reference points)
+  - Approximates known elevation features via Gaussian peaks
 
-Known elevation references:
-  Cerro Punta:       1338 m  (highest point)
-  Cerro Maravilla:   1225 m
+Known elevation references used:
+  Cerro Punta:       1338 m  (highest point, Cordillera Central)
   Tres Picachos:     1246 m
+  Cerro Maravilla:   1225 m
   Monte Guilarte:    1205 m
   Monte del Estado:  1190 m
   El Yunque peak:    1065 m
@@ -20,16 +19,23 @@ Usage:
     python tools/generate_synthetic_dem.py
 """
 
+import logging
 import sys
 from pathlib import Path
 
 import numpy as np
 import rasterio
-from rasterio.transform import from_bounds
 from rasterio.crs import CRS
+from rasterio.transform import from_bounds
 from PIL import Image, ImageDraw
 
-ROOT = Path(__file__).resolve().parents[1]
+from tools._config import ROOT
+
+log = logging.getLogger(__name__)
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
 RAW_DIR = ROOT / "data" / "raw"
 LOG_DIR = ROOT / "output" / "logs"
 
@@ -44,12 +50,12 @@ LAT_MIN, LAT_MAX = 17.88, 18.55
 
 # Raster grid dimensions
 WIDTH  = 2048
+# HEIGHT ≈ 802 pixels  (2048 × (18.55-17.88) / (67.30-65.59) ≈ 2048 × 0.67/1.71)
 HEIGHT = max(1, int(round(WIDTH * (LAT_MAX - LAT_MIN) / (LON_MAX - LON_MIN))))
-# ≈ 2048 × 496 at these bounds
 
 # ---------------------------------------------------------------------------
 # Puerto Rico simplified coastline polygon
-# (lon, lat) pairs forming a closed polygon; counterclockwise
+# (lon, lat) pairs, counterclockwise, closed at NW corner.
 # Drawn from well-known cartographic reference points of the main island.
 # ---------------------------------------------------------------------------
 PR_COASTLINE = [
@@ -94,148 +100,133 @@ PR_COASTLINE = [
 ]
 
 # ---------------------------------------------------------------------------
-# Elevation features: (lon, lat, elevation_m, sigma_deg)
-# These represent known peaks plus broad terrain blobs.
-# sigma_deg = Gaussian half-width in degrees; larger = broader hill
+# Terrain features: (lon, lat, elevation_m, sigma_deg)
+# sigma_deg = Gaussian half-width in degrees (larger = broader hill)
 # ---------------------------------------------------------------------------
 TERRAIN_FEATURES = [
-    # ---- Central Cordillera peaks ----
-    (-66.593, 18.173, 1338, 0.060),  # Cerro Punta (highest)
-    (-66.463, 18.163, 1246, 0.055),  # Tres Picachos
-    (-66.980, 18.163, 1225, 0.055),  # Cerro Maravilla
-    (-66.771, 18.142, 1205, 0.055),  # Monte Guilarte
-    (-67.095, 18.163, 1190, 0.050),  # Monte del Estado
-    (-66.350, 18.145, 1100, 0.050),  # Pico La Torre / Cerro Las Pelas
-    (-66.250, 18.155, 950,  0.045),  # Eastern Cordillera
-    # ---- Broad Cordillera spine (lower Gaussian blobs) ----
-    (-67.10,  18.16,  850,  0.160),  # W Cordillera broad
-    (-66.85,  18.15,  980,  0.160),  # W-central Cordillera broad
-    (-66.70,  18.17, 1100,  0.160),  # Central Cordillera broad
-    (-66.55,  18.16, 1000,  0.160),  # Central broad
-    (-66.40,  18.16,  900,  0.150),  # E-central Cordillera broad
-    (-66.20,  18.20,  650,  0.130),  # Eastern ridge broad
-    (-66.05,  18.23,  500,  0.110),  # NE foothills broad
-    # ---- Sierra de Luquillo / El Yunque ----
-    (-65.787, 18.292, 1065, 0.060),  # El Yunque peak
-    (-65.840, 18.275,  900, 0.050),  # Luquillo E
-    (-65.900, 18.250,  700, 0.055),  # Luquillo foothills
-    (-65.870, 18.230,  600, 0.060),  # Luquillo S slopes
-    # ---- Smaller isolated hills ----
-    (-66.120, 18.250,  580, 0.045),  # NE interior
-    (-66.200, 18.170,  480, 0.040),  # Cayey / Caguas area
-    (-66.850, 18.080,  320, 0.050),  # SW hills
-    (-66.650, 18.100,  350, 0.040),  # S-central slopes
-    (-66.500, 18.080,  400, 0.040),  # SE Cordillera foot
-    (-67.180, 18.200,  380, 0.040),  # W coast sierra
-    (-67.050, 18.250,  340, 0.035),  # NW interior
-    (-65.940, 18.150,  300, 0.035),  # SE foothills
-    # ---- Coastal lowland blobs (low elevation fill) ----
-    (-66.100, 18.420,   20, 0.100),  # San Juan metro coastal
-    (-66.700, 18.420,   25, 0.080),  # NW coastal plain
-    (-66.550, 17.975,   18, 0.090),  # Ponce / S coast plain
-    (-66.350, 17.975,   20, 0.080),  # SE coast plain
-    (-67.150, 18.100,   15, 0.060),  # Cabo Rojo coastal
-    (-65.750, 18.340,   30, 0.040),  # NE coastal
+    # Cordillera Central peaks
+    (-66.593, 18.173, 1338, 0.060),
+    (-66.463, 18.163, 1246, 0.055),
+    (-66.980, 18.163, 1225, 0.055),
+    (-66.771, 18.142, 1205, 0.055),
+    (-67.095, 18.163, 1190, 0.050),
+    (-66.350, 18.145, 1100, 0.050),
+    (-66.250, 18.155,  950, 0.045),
+    # Broad Cordillera spine
+    (-67.10,  18.16,   850, 0.160),
+    (-66.85,  18.15,   980, 0.160),
+    (-66.70,  18.17,  1100, 0.160),
+    (-66.55,  18.16,  1000, 0.160),
+    (-66.40,  18.16,   900, 0.150),
+    (-66.20,  18.20,   650, 0.130),
+    (-66.05,  18.23,   500, 0.110),
+    # Sierra de Luquillo / El Yunque
+    (-65.787, 18.292, 1065, 0.060),
+    (-65.840, 18.275,  900, 0.050),
+    (-65.900, 18.250,  700, 0.055),
+    (-65.870, 18.230,  600, 0.060),
+    # Smaller hills
+    (-66.120, 18.250,  580, 0.045),
+    (-66.200, 18.170,  480, 0.040),
+    (-66.850, 18.080,  320, 0.050),
+    (-66.650, 18.100,  350, 0.040),
+    (-66.500, 18.080,  400, 0.040),
+    (-67.180, 18.200,  380, 0.040),
+    (-67.050, 18.250,  340, 0.035),
+    (-65.940, 18.150,  300, 0.035),
+    # Coastal lowland fills
+    (-66.100, 18.420,   20, 0.100),
+    (-66.700, 18.420,   25, 0.080),
+    (-66.550, 17.975,   18, 0.090),
+    (-66.350, 17.975,   20, 0.080),
+    (-67.150, 18.100,   15, 0.060),
+    (-65.750, 18.340,   30, 0.040),
 ]
 
 
-def lon_to_px(lon: float) -> float:
+def _lon_to_px(lon: float) -> float:
     return (lon - LON_MIN) / (LON_MAX - LON_MIN) * WIDTH
 
 
-def lat_to_py(lat: float) -> float:
-    """Convert latitude to pixel row (y increases downward)."""
+def _lat_to_py(lat: float) -> float:
+    """Latitude → pixel row (y increases downward)."""
     return (LAT_MAX - lat) / (LAT_MAX - LAT_MIN) * HEIGHT
 
 
-def build_coastline_mask() -> np.ndarray:
-    """Rasterise the PR polygon; returns bool array True=land."""
-    poly_px = [(lon_to_px(lon), lat_to_py(lat)) for lon, lat in PR_COASTLINE]
+def _build_coastline_mask() -> np.ndarray:
+    poly_px = [(_lon_to_px(lon), _lat_to_py(lat)) for lon, lat in PR_COASTLINE]
     img = Image.new("1", (WIDTH, HEIGHT), 0)
     draw = ImageDraw.Draw(img)
     draw.polygon(poly_px, fill=1, outline=1)
     return np.array(img, dtype=bool)
 
 
-def build_elevation_grid() -> np.ndarray:
-    """Compute elevation at each grid cell using Gaussian terrain features."""
-    # Coordinate arrays (lon, lat for each pixel)
+def _build_elevation_grid() -> np.ndarray:
     lons = np.linspace(LON_MIN, LON_MAX, WIDTH,  endpoint=True)
     lats = np.linspace(LAT_MAX, LAT_MIN, HEIGHT, endpoint=True)
-    lon_grid, lat_grid = np.meshgrid(lons, lats)  # shape (H, W)
+    lon_grid, lat_grid = np.meshgrid(lons, lats)
 
     elev = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
-
-    for (clon, clat, peak_m, sigma_deg) in TERRAIN_FEATURES:
-        dist2 = ((lon_grid - clon) ** 2 + (lat_grid - clat) ** 2)
-        gauss = peak_m * np.exp(-dist2 / (2 * sigma_deg ** 2))
-        elev = np.maximum(elev, gauss)
-
+    for clon, clat, peak_m, sigma_deg in TERRAIN_FEATURES:
+        dist2 = (lon_grid - clon) ** 2 + (lat_grid - clat) ** 2
+        elev = np.maximum(elev, peak_m * np.exp(-dist2 / (2 * sigma_deg ** 2)))
     return elev
 
 
 def main() -> None:
-    print("=== Synthetic Puerto Rico DEM Generator ===")
-    print(f"Grid: {WIDTH} x {HEIGHT} pixels")
-    print(f"Bounds: lon [{LON_MIN}, {LON_MAX}], lat [{LAT_MIN}, {LAT_MAX}]")
+    log.info("=== Synthetic Puerto Rico DEM Generator ===")
+    log.info("Grid: %d x %d  bounds: lon [%.2f, %.2f]  lat [%.2f, %.2f]",
+             WIDTH, HEIGHT, LON_MIN, LON_MAX, LAT_MIN, LAT_MAX)
 
-    print("Building coastline mask...")
-    mask = build_coastline_mask()
-    land_pct = mask.sum() / mask.size * 100
-    print(f"  Land fraction: {land_pct:.1f}%")
+    log.info("Building coastline mask …")
+    mask = _build_coastline_mask()
+    log.info("  Land fraction: %.1f%%", mask.sum() / mask.size * 100)
 
-    print("Building elevation grid...")
-    elev = build_elevation_grid()
-
-    # Apply mask: ocean = -1 (will be treated as nodata/ocean in build_heightmap)
+    log.info("Building elevation grid …")
+    elev = _build_elevation_grid()
     elev[~mask] = -1.0
 
-    elev_min = float(elev[mask].min()) if mask.any() else 0.0
-    elev_max = float(elev[mask].max()) if mask.any() else 0.0
-    print(f"  Elevation range (land): {elev_min:.1f} m – {elev_max:.1f} m")
+    elev_land = elev[mask]
+    elev_min = float(elev_land.min()) if elev_land.size else 0.0
+    elev_max = float(elev_land.max()) if elev_land.size else 0.0
+    log.info("  Elevation range (land): %.1f m – %.1f m", elev_min, elev_max)
 
-    # Save as GeoTIFF in WGS84 (EPSG:4326)
+    log.info("Saving GeoTIFF: %s", OUT_FILE)
     transform = from_bounds(LON_MIN, LAT_MIN, LON_MAX, LAT_MAX, WIDTH, HEIGHT)
-    crs = CRS.from_epsg(4326)
-
-    print(f"Saving GeoTIFF: {OUT_FILE}")
     with rasterio.open(
-        OUT_FILE,
-        "w",
-        driver="GTiff",
-        height=HEIGHT,
-        width=WIDTH,
-        count=1,
-        dtype="float32",
-        crs=crs,
+        OUT_FILE, "w",
+        driver="GTiff", height=HEIGHT, width=WIDTH,
+        count=1, dtype="float32",
+        crs=CRS.from_epsg(4326),
         transform=transform,
         nodata=-1.0,
     ) as dst:
         dst.write(elev, 1)
 
-    file_mb = OUT_FILE.stat().st_size / (1 << 20)
-    print(f"  File size: {file_mb:.1f} MiB")
+    log.info("  File size: %.1f MiB", OUT_FILE.stat().st_size / (1 << 20))
 
-    # Write audit log
+    # Atomic audit write
     audit_lines = [
         "SOURCE=SYNTHETIC (network unavailable; modeled from known geographic features)",
         "GENERATOR=tools/generate_synthetic_dem.py",
         f"FILE={OUT_FILE.name}",
         f"SIZE_BYTES={OUT_FILE.stat().st_size}",
-        f"CRS=EPSG:4326",
+        "CRS=EPSG:4326",
         f"WIDTH={WIDTH}",
         f"HEIGHT={HEIGHT}",
         f"BOUNDS=({LON_MIN}, {LAT_MIN}, {LON_MAX}, {LAT_MAX})",
         f"ELEV_MIN={elev_min:.2f}",
         f"ELEV_MAX={elev_max:.2f}",
-        "NOTE=Coastline from cartographic reference points; elevation from Gaussian peaks at known locations",
+        "NOTE=Coastline from 34 cartographic reference points",
+        "NOTE=Elevation from Gaussian peaks at known locations",
         "NOTE=Replace with official NOAA CUDEM or USGS 3DEP DEM for production quality",
     ]
-    audit_path = LOG_DIR / "source_audit.txt"
-    audit_path.write_text("\n".join(audit_lines) + "\n", encoding="utf-8")
+    tmp = LOG_DIR / "source_audit.tmp"
+    tmp.write_text("\n".join(audit_lines) + "\n", encoding="utf-8")
+    tmp.rename(LOG_DIR / "source_audit.txt")
 
-    print("\nSYNTHETIC_DEM_OK")
-    print(str(OUT_FILE))
+    log.info("\nSYNTHETIC_DEM_OK")
+    log.info("%s", OUT_FILE)
 
 
 if __name__ == "__main__":

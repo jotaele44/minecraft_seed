@@ -8,9 +8,12 @@ HEIGHT=802
 BOUNDS=(-67.3, 17.88, -65.59, 18.55)
 ELEV_MIN=1.48
 ELEV_MAX=1337.97
-NOTE=Coastline from cartographic reference points; elevation from Gaussian peaks at known locations
+NOTE=Coastline from 34 cartographic reference points
+NOTE=Elevation from Gaussian peaks at known locations
 NOTE=Replace with official NOAA CUDEM or USGS 3DEP DEM for production quality
-INPUT=puerto_rico_official_dem.tif
+
+--- RUN 2026-03-28T05:10:28Z ---
+INPUT=data/raw/puerto_rico_official_dem.tif
 CRS=EPSG:4326
 WIDTH=2048
 HEIGHT=802
@@ -21,4 +24,6 @@ MAX=1337.9680
 LAND_MAX=1337.9680
 OUTPUT_WIDTH=2033
 OUTPUT_HEIGHT=839
-OUTPUT_FILE=/home/user/minecraft_seed/PR_Minecraft_World/output/heightmap/puerto_rico_heightmap_2048.png
+SPAWN_X=1533
+SPAWN_Z=286
+OUTPUT_FILE=output/heightmap/puerto_rico_heightmap.png

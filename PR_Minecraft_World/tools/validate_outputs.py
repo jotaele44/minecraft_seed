@@ -1,96 +1,127 @@
 """
-validate_outputs.py — Verify that all pipeline outputs meet quality gates.
+validate_outputs.py — Verify all pipeline outputs meet quality gates.
 
 Usage:
-    python tools/validate_outputs.py
+    python tools/validate_outputs.py [--verbose]
 
-Expected output:
+Expected output on success:
     JSON_OK
     HEIGHTMAP_VALID
 """
 
+import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-HEIGHTMAP = ROOT / "output" / "heightmap" / "puerto_rico_heightmap_2048.png"
-META = ROOT / "output" / "heightmap" / "heightmap_metadata.json"
-IMPORT = ROOT / "output" / "worldpainter" / "import_settings.txt"
-AUDIT = ROOT / "output" / "logs" / "source_audit.txt"
+import numpy as np
+from PIL import Image
+
+from tools._config import ROOT
+
+log = logging.getLogger(__name__)
+
+HEIGHTMAP = ROOT / "output" / "heightmap" / "puerto_rico_heightmap.png"
+META      = ROOT / "output" / "heightmap" / "heightmap_metadata.json"
+IMPORT    = ROOT / "output" / "worldpainter" / "import_settings.txt"
+AUDIT     = ROOT / "output" / "logs"        / "source_audit.txt"
 
 
-def fail(msg: str, code: int = 1) -> None:
-    print(f"ERROR: {msg}", file=sys.stderr)
+def _fail(msg: str, code: int = 1) -> None:
+    log.error(msg)
     sys.exit(code)
 
 
-def check_file_exists(path: Path, label: str) -> None:
+def _check_exists(path: Path, label: str) -> None:
     if not path.exists():
-        fail(f"Missing {label}: {path}")
+        _fail(f"Missing {label}: {path}")
 
 
-# ---------------------------------------------------------------------------
-# File existence checks
-# ---------------------------------------------------------------------------
-check_file_exists(HEIGHTMAP, "heightmap PNG")
-check_file_exists(META, "metadata JSON")
-check_file_exists(IMPORT, "WorldPainter import settings")
-check_file_exists(AUDIT, "source audit log")
+def validate_json() -> dict:
+    """Validate heightmap_metadata.json; return parsed dict."""
+    _check_exists(META, "metadata JSON")
+    try:
+        meta = json.loads(META.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        _fail(f"heightmap_metadata.json is not valid JSON: {exc}")
 
-# ---------------------------------------------------------------------------
-# Metadata JSON validation
-# ---------------------------------------------------------------------------
-try:
-    meta = json.loads(META.read_text(encoding="utf-8"))
-except json.JSONDecodeError as exc:
-    fail(f"heightmap_metadata.json is not valid JSON: {exc}")
+    required = [
+        "input_raster", "source_min_m", "source_max_m",
+        "output_width", "output_height", "sea_level_block", "output_mode",
+        "spawn_x", "spawn_y", "spawn_z",
+    ]
+    for key in required:
+        if key not in meta:
+            _fail(f"Missing key '{key}' in heightmap_metadata.json")
 
-required_keys = ["input_raster", "source_min_m", "source_max_m", "output_width",
-                 "output_height", "sea_level_block", "output_mode"]
-for key in required_keys:
-    if key not in meta:
-        fail(f"Missing key '{key}' in heightmap_metadata.json")
+    if meta["output_mode"] != "L":
+        _fail(f"output_mode is '{meta['output_mode']}', expected 'L'")
 
-if meta.get("output_mode") != "L":
-    fail(f"Metadata reports output_mode='{meta.get('output_mode')}', expected 'L'")
+    if meta.get("input_raster", "").startswith("/"):
+        _fail("input_raster in metadata is an absolute path — should be relative")
 
-print("JSON_OK")
+    log.info("JSON_OK")
+    return meta
 
-# ---------------------------------------------------------------------------
-# Heightmap PNG validation
-# ---------------------------------------------------------------------------
-try:
-    from PIL import Image
-except ImportError:
-    fail("Pillow not installed — run: pip install Pillow==10.4.0")
 
-img = Image.open(HEIGHTMAP)
+def validate_heightmap(meta: dict) -> None:
+    """Validate the PNG heightmap against quality gates."""
+    _check_exists(HEIGHTMAP, "heightmap PNG")
 
-if img.mode != "L":
-    fail(f"Heightmap image mode is '{img.mode}', must be 'L' (8-bit grayscale, no alpha)")
+    img = Image.open(HEIGHTMAP)
 
-w, h = img.size
-if max(w, h) > 2048:
-    fail(f"Heightmap dimensions {w}x{h} exceed maximum of 2048 px")
+    if img.mode != "L":
+        _fail(f"PNG mode is '{img.mode}', must be 'L' (8-bit grayscale, no alpha)")
 
-if min(w, h) < 1:
-    fail(f"Heightmap has zero-size dimension: {w}x{h}")
+    w, h = img.size
+    if max(w, h) > 2048:
+        _fail(f"PNG dimensions {w}×{h} exceed 2048 px")
+    if min(w, h) < 1:
+        _fail(f"PNG has zero-size dimension: {w}×{h}")
 
-# Sanity check: image must have both dark (ocean) and bright (land) pixels
-import numpy as np
-arr = np.array(img)
-if arr.max() == 0:
-    fail("Heightmap is entirely black — no land terrain found")
-if arr.min() == arr.max():
-    fail(f"Heightmap is flat (all pixels = {arr.min()}) — normalization may have failed")
+    arr = np.array(img)
+    if arr.max() == 0:
+        _fail("PNG is entirely black — no land terrain found")
+    if arr.min() == arr.max():
+        _fail(f"PNG is flat (all pixels = {arr.min()}) — normalisation failed")
 
-land_fraction = float((arr > 10).sum()) / arr.size
-if land_fraction < 0.01:
-    fail(f"Heightmap has very little land ({land_fraction*100:.2f}% > 10) — check DEM coverage")
+    land_frac = float((arr > 10).sum()) / arr.size
+    if land_frac < 0.01:
+        _fail(
+            f"Only {land_frac*100:.2f}% of pixels > 10 — check DEM covers Puerto Rico land area"
+        )
 
-print(f"  Size:          {w} x {h} px")
-print(f"  Mode:          {img.mode}")
-print(f"  Pixel range:   {int(arr.min())} – {int(arr.max())}")
-print(f"  Land fraction: {land_fraction*100:.1f}%")
-print("HEIGHTMAP_VALID")
+    # Cross-check dimensions against metadata
+    if w != meta["output_width"] or h != meta["output_height"]:
+        _fail(
+            f"PNG dimensions {w}×{h} do not match metadata "
+            f"({meta['output_width']}×{meta['output_height']})"
+        )
+
+    log.info("  Size:          %d x %d px", w, h)
+    log.info("  Mode:          %s", img.mode)
+    log.info("  Pixel range:   %d – %d", int(arr.min()), int(arr.max()))
+    log.info("  Land fraction: %.1f%%", land_frac * 100)
+    log.info("HEIGHTMAP_VALID")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Validate pipeline outputs.")
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s %(message)s",
+    )
+
+    _check_exists(IMPORT, "WorldPainter import settings")
+    _check_exists(AUDIT,  "source audit log")
+
+    meta = validate_json()
+    validate_heightmap(meta)
+
+
+if __name__ == "__main__":
+    main()

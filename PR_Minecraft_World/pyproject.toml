@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pr-minecraft-world"
+version = "1.1.0"
+description = "Puerto Rico DEM → Minecraft Java heightmap pipeline"
+requires-python = ">=3.11"
+# Runtime pins live in requirements.txt — this section is for metadata only.
+# To install: pip install -r requirements.txt
+
+[project.scripts]
+pr-fetch    = "tools.fetch_dem:main"
+pr-build    = "tools.build_heightmap:main"
+pr-validate = "tools.validate_outputs:main"
+pr-preview  = "tools.preview_heightmap:main"
+pr-run      = "tools.run_pipeline:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts   = "-v"
+# conftest.py inserts the project root into sys.path so `tools` is importable.

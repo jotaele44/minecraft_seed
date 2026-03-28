@@ -1,34 +1,43 @@
 WorldPainter Heightmap Import Settings
 ======================================
 
-Heightmap file: output/heightmap/puerto_rico_heightmap_2048.png
-Format:         8-bit grayscale PNG (no alpha)
-Mapping:        Linear
-Smoothing:      DISABLED (uncheck 'smooth terrain' on import)
-Water level:    62 (Minecraft block height)
-World type:     Surface
+Heightmap file:  output/heightmap/puerto_rico_heightmap.png
+Format:          8-bit grayscale PNG (no alpha)  [or 16-bit if _16bit variant used]
+Mapping:         Linear
+Smoothing:       DISABLED (uncheck 'smooth terrain' on import)
+Water level:     62 (Minecraft block height)
+Maximum height:  255
+World type:      Surface
+
+Minecraft version target: pre-1.18
+  pre-1.18 → water level 62, max height 255
+  1.18+    → water level 63, max height 384  (update values above)
 
 Import steps (WorldPainter GUI):
   1. File > Import > Import Height Map...
-  2. Select: output/heightmap/puerto_rico_heightmap_2048.png
+  2. Select: output/heightmap/puerto_rico_heightmap.png
   3. Verify 'Grayscale' is selected (not RGBA)
-  4. Set 'Maximum height' to 255 (or your preferred ceiling)
+  4. Set 'Maximum height' to 255
   5. Set 'Water level' to 62
   6. Uncheck 'Smooth terrain'
-  7. Leave scale as default (one pixel = one block)
+  7. Leave scale as default (1 pixel = 1 block)
   8. Click Import
 
-Spawn recommendation:
-  Place spawn in the northeast quadrant (San Juan / Loíza area)
-  Ensure spawn is on solid land above water level 62
-  Use WorldPainter Spawn Point tool to confirm placement
+CLI alternative (WorldPainter command-line):
+  worldpainter -import output/heightmap/puerto_rico_heightmap.png \
+               --config output/worldpainter/worldpainter_import.properties
+
+Computed spawn (set this in WorldPainter Spawn Point tool):
+  Block X = 1533
+  Block Y = 63  (approximate surface; WorldPainter will adjust)
+  Block Z = 286
+  Region:  northeast quadrant (San Juan / Loíza area)
 
 Export:
   File > Export > Export as Minecraft world...
   Choose Minecraft Java Edition format
-  Set seed to any value (terrain is heightmap-driven)
 
-If the import looks curved or distorted:
-  - Confirm PNG mode is L (grayscale, no alpha)
-  - Confirm Linear mapping is selected (not logarithmic)
-  - Re-import with Smooth terrain DISABLED
+Troubleshooting:
+  Curved/distorted import → confirm PNG is mode L, mapping is Linear, smoothing off
+  Blank world            → check source_audit.txt for elevation range
+  Wrong sea level        → update water level to match your Minecraft version

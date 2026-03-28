@@ -1,16 +1,23 @@
 {
-  "input_raster": "/home/user/minecraft_seed/PR_Minecraft_World/data/raw/puerto_rico_official_dem.tif",
+  "input_raster": "data/raw/puerto_rico_official_dem.tif",
   "source_min_m": 1.5033,
   "source_max_m": 1337.968,
   "land_max_m": 1337.968,
   "output_width": 2033,
   "output_height": 839,
   "sea_level_block": 62,
+  "max_height": 255,
+  "minecraft_version": "pre-1.18",
   "output_mode": "L",
+  "spawn_x": 1533,
+  "spawn_y": 63,
+  "spawn_z": 286,
   "notes": [
-    "Underwater and nodata cells were forced to 0 baseline (ocean)",
-    "Land elevation normalized: 0 m \u2192 pixel 0, land_max_m \u2192 pixel 255",
+    "Underwater and nodata cells forced to 0 baseline (ocean)",
+    "Land elevation normalised: 0 m \u2192 pixel 0, land_max_m \u2192 pixel 255 (8-bit) / 65535 (16-bit)",
     "Output is 8-bit grayscale (mode L) without alpha channel",
+    "16-bit variant also available: puerto_rico_heightmap_16bit.png",
+    "Spawn coordinates are pixel-to-block (X=col, Z=row); Y is approximate surface",
     "Designed for WorldPainter heightmap import with linear mapping"
   ]
 }

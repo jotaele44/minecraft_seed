@@ -8,9 +8,6 @@ data/raw/*.nc
 data/raw/*.img
 data/raw/*.zip
 
-# Processed intermediates
-data/processed/
-
 # Python cache
 __pycache__/
 *.pyc

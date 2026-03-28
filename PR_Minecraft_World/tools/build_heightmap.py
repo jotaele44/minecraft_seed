@@ -1,252 +1,434 @@
 """
-build_heightmap.py — Convert an official Puerto Rico DEM GeoTIFF into a
-WorldPainter-compatible 8-bit grayscale PNG heightmap.
+build_heightmap.py — Convert a Puerto Rico DEM GeoTIFF into a
+WorldPainter-compatible grayscale PNG heightmap.
 
 Usage:
-    python tools/build_heightmap.py
+    python tools/build_heightmap.py [--bits {8,16}] [--verbose]
 """
 
+import argparse
+import datetime
 import json
-import math
-import os
+import logging
 import sys
 from pathlib import Path
 
 import numpy as np
 import rasterio
-from rasterio.enums import Resampling
+from rasterio.enums import Resampling as RasterioResampling
 from rasterio.warp import calculate_default_transform, reproject
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parents[1]
-RAW_DIR = ROOT / "data" / "raw"
-PROC_DIR = ROOT / "data" / "processed"
-OUT_DIR = ROOT / "output"
-LOG_DIR = OUT_DIR / "logs"
-HEIGHTMAP_DIR = OUT_DIR / "heightmap"
-WORLDPAINTER_DIR = OUT_DIR / "worldpainter"
+from tools._config import ROOT, load_config
 
-TARGET_MAX_DIM = 2048
-SEA_LEVEL_BLOCK = 62
+log = logging.getLogger(__name__)
 
-for d in [PROC_DIR, LOG_DIR, HEIGHTMAP_DIR, WORLDPAINTER_DIR]:
-    d.mkdir(parents=True, exist_ok=True)
+RAW_DIR    = ROOT / "data" / "raw"
+OUT_DIR    = ROOT / "output"
+LOG_DIR    = OUT_DIR / "logs"
+HM_DIR     = OUT_DIR / "heightmap"
+WP_DIR     = OUT_DIR / "worldpainter"
 
+_RESAMPLING_MAP = {
+    "bilinear": RasterioResampling.bilinear,
+    "nearest":  RasterioResampling.nearest,
+    "cubic":    RasterioResampling.cubic,
+}
 
-def fail(msg: str, code: int = 1) -> None:
-    print(f"ERROR: {msg}", file=sys.stderr)
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _fail(msg: str, code: int = 1) -> None:
+    log.error(msg)
     sys.exit(code)
 
 
-def find_input_raster() -> Path:
-    candidates = list(RAW_DIR.glob("*.tif")) + list(RAW_DIR.glob("*.tiff"))
-    # Also accept NetCDF files (NOAA CUDEM is sometimes distributed as .nc)
-    candidates += list(RAW_DIR.glob("*.nc"))
+def _find_input_raster() -> Path:
+    candidates = (
+        list(RAW_DIR.glob("*.tif"))
+        + list(RAW_DIR.glob("*.tiff"))
+        + list(RAW_DIR.glob("*.nc"))
+    )
     if not candidates:
-        fail("No GeoTIFF or NetCDF found in data/raw/. Run fetch_dem.py first.")
-    # Choose the largest file as the primary candidate
+        _fail("No GeoTIFF or NetCDF found in data/raw/. Run fetch_dem.py first.")
     candidates.sort(key=lambda p: p.stat().st_size, reverse=True)
     return candidates[0]
 
 
-def write_text(path: Path, text: str) -> None:
-    path.write_text(text, encoding="utf-8")
-
-
-def open_raster(path: Path):
-    """Open a raster with rasterio, handling NetCDF subdatasets if needed."""
+def _open_raster(path: Path) -> rasterio.DatasetReader:
+    """Open a raster, resolving NetCDF subdatasets by inspecting band dtypes."""
     try:
         src = rasterio.open(path)
-        # Quick check — if it's a NetCDF with multiple subdatasets, pick the elevation band
-        if hasattr(src, "subdatasets") and src.subdatasets:
-            # prefer a subdataset whose name mentions 'Band1', 'z', or 'elevation'
-            sd = src.subdatasets
-            chosen = sd[0]
-            for s in sd:
-                sl = s.lower()
-                if any(kw in sl for kw in ["z:", "elevation", "band1"]):
-                    chosen = s
-                    break
-            src.close()
-            src = rasterio.open(chosen)
-        return src
     except Exception as exc:
-        fail(f"Cannot open raster {path}: {exc}")
+        _fail(f"Cannot open raster {path}: {exc}")
+
+    if not (hasattr(src, "subdatasets") and src.subdatasets):
+        return src
+
+    # NetCDF with subdatasets: pick the one whose band has a float/int dtype
+    # and the widest value range (most likely elevation).
+    log.debug("NetCDF subdatasets: %s", src.subdatasets)
+    src.close()
+    best_sd = src.subdatasets[0]
+    best_range = -1.0
+    for sd in src.subdatasets:
+        try:
+            with rasterio.open(sd) as probe:
+                if probe.dtypes[0] not in ("float32", "float64", "int16", "int32"):
+                    continue
+                data = probe.read(1).astype("float64")
+                nd = probe.nodata
+                if nd is not None:
+                    data = data[data != nd]
+                if data.size == 0:
+                    continue
+                rng = float(data.max() - data.min())
+                log.debug("  subdataset %s range=%.1f", sd, rng)
+                if rng > best_range:
+                    best_range = rng
+                    best_sd = sd
+        except Exception:
+            continue
+
+    log.info("Selected NetCDF subdataset: %s (range=%.1f)", best_sd, best_range)
+    try:
+        return rasterio.open(best_sd)
+    except Exception as exc:
+        _fail(f"Cannot open NetCDF subdataset {best_sd}: {exc}")
 
 
-def main() -> None:
-    in_raster = find_input_raster()
-    print(f"Input raster: {in_raster}")
+def _find_spawn_pixel(arr: np.ndarray, sea_px: int = 10) -> tuple[int, int]:
+    """
+    Find a safe land pixel in the configured spawn quadrant.
+    Returns (pixel_x, pixel_y) → Minecraft block (X, Z).
+    """
+    h, w = arr.shape
 
-    audit_lines = []
-    audit_lines.append(f"INPUT={in_raster.name}")
+    # Build quadrant slice
+    def _ne():  return arr[:h // 2,  w * 6 // 10:]
+    def _nw():  return arr[:h // 2,  :w * 4 // 10]
+    def _se():  return arr[h // 2:,  w * 6 // 10:]
+    def _sw():  return arr[h // 2:,  :w * 4 // 10]
+    def _ctr(): return arr[h // 4:h * 3 // 4, w // 4:w * 3 // 4]
 
-    src = open_raster(in_raster)
-    audit_lines.append(f"CRS={src.crs}")
-    audit_lines.append(f"WIDTH={src.width}")
-    audit_lines.append(f"HEIGHT={src.height}")
-    audit_lines.append(f"NODATA={src.nodata}")
-    audit_lines.append(f"BOUNDS={src.bounds}")
-    print(f"  CRS:    {src.crs}")
-    print(f"  Size:   {src.width} x {src.height}")
-    print(f"  Nodata: {src.nodata}")
-    print(f"  Bounds: {src.bounds}")
+    offsets = {
+        "northeast": (_ne,  w * 6 // 10, 0),
+        "northwest": (_nw,  0,            0),
+        "southeast": (_se,  w * 6 // 10, h // 2),
+        "southwest": (_sw,  0,            h // 2),
+        "center":    (_ctr, w // 4,       h // 4),
+    }
 
-    data = src.read(1).astype("float32")
+    cfg = load_config()
+    quadrant = cfg["spawn"].get("quadrant", "northeast")
+    region_fn, ox, oy = offsets.get(quadrant, offsets["northeast"])
+    region = region_fn()
 
-    if src.nodata is not None:
-        data[data == src.nodata] = np.nan
+    land_ys, land_xs = np.where(region > sea_px)
+    if land_xs.size == 0:
+        log.warning("No land in %s quadrant; falling back to any land pixel.", quadrant)
+        land_ys, land_xs = np.where(arr > sea_px)
+        if land_xs.size == 0:
+            return w // 2, h // 4
+        ox, oy = 0, 0
 
-    data[~np.isfinite(data)] = np.nan
+    cx = int(np.median(land_xs)) + ox
+    cy = int(np.median(land_ys)) + oy
+    return cx, cy
 
-    # Reproject to Web Mercator for stable, square-pixel resizing
-    dst_crs = "EPSG:3857"
-    transform, width, height = calculate_default_transform(
-        src.crs, dst_crs, src.width, src.height, *src.bounds
+
+def _write_worldpainter_settings(
+    hm_name: str,
+    spawn_x: int,
+    spawn_y: int,
+    spawn_z: int,
+    sea_level: int,
+    max_height: int,
+    mc_version: str,
+) -> None:
+    lines = [
+        "WorldPainter Heightmap Import Settings",
+        "======================================",
+        "",
+        f"Heightmap file:  output/heightmap/{hm_name}",
+        "Format:          8-bit grayscale PNG (no alpha)  [or 16-bit if _16bit variant used]",
+        "Mapping:         Linear",
+        "Smoothing:       DISABLED (uncheck 'smooth terrain' on import)",
+        f"Water level:     {sea_level} (Minecraft block height)",
+        f"Maximum height:  {max_height}",
+        "World type:      Surface",
+        "",
+        f"Minecraft version target: {mc_version}",
+        "  pre-1.18 → water level 62, max height 255",
+        "  1.18+    → water level 63, max height 384  (update values above)",
+        "",
+        "Import steps (WorldPainter GUI):",
+        "  1. File > Import > Import Height Map...",
+        f"  2. Select: output/heightmap/{hm_name}",
+        "  3. Verify 'Grayscale' is selected (not RGBA)",
+        f"  4. Set 'Maximum height' to {max_height}",
+        f"  5. Set 'Water level' to {sea_level}",
+        "  6. Uncheck 'Smooth terrain'",
+        "  7. Leave scale as default (1 pixel = 1 block)",
+        "  8. Click Import",
+        "",
+        "CLI alternative (WorldPainter command-line):",
+        f"  worldpainter -import output/heightmap/{hm_name} \\",
+        "               --config output/worldpainter/worldpainter_import.properties",
+        "",
+        "Computed spawn (set this in WorldPainter Spawn Point tool):",
+        f"  Block X = {spawn_x}",
+        f"  Block Y = {spawn_y}  (approximate surface; WorldPainter will adjust)",
+        f"  Block Z = {spawn_z}",
+        "  Region:  northeast quadrant (San Juan / Loíza area)",
+        "",
+        "Export:",
+        "  File > Export > Export as Minecraft world...",
+        "  Choose Minecraft Java Edition format",
+        "",
+        "Troubleshooting:",
+        "  Curved/distorted import → confirm PNG is mode L, mapping is Linear, smoothing off",
+        "  Blank world            → check source_audit.txt for elevation range",
+        "  Wrong sea level        → update water level to match your Minecraft version",
+    ]
+    (WP_DIR / "import_settings.txt").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
     )
 
-    reproj = np.full((height, width), np.nan, dtype="float32")
 
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+def main(bits_override: int | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Build Puerto Rico Minecraft heightmap.")
+    parser.add_argument(
+        "--bits", type=int, choices=[8, 16], default=None,
+        help="Output bit depth (overrides config.toml). Default: 8.",
+    )
+    parser.add_argument("--verbose", action="store_true", help="Enable debug logging.")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s %(message)s",
+    )
+
+    cfg = load_config()
+    hm_cfg = cfg["heightmap"]
+    mc_cfg = cfg["minecraft"]
+
+    target_max_dim = hm_cfg["target_max_dim"]
+    bits = bits_override or args.bits or hm_cfg["bits"]
+    sea_level = mc_cfg["sea_level_block"]
+    max_height = mc_cfg["max_height"]
+    mc_version = mc_cfg["version"]
+    resample_alg = _RESAMPLING_MAP.get(hm_cfg["resampling"], RasterioResampling.bilinear)
+
+    for d in [LOG_DIR, HM_DIR, WP_DIR]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    in_raster = _find_input_raster()
+    log.info("Input raster: %s", in_raster)
+
+    # Per-run audit section
+    run_ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    audit: list[str] = [f"--- RUN {run_ts} ---"]
+    audit.append(f"INPUT={in_raster.relative_to(ROOT)}")
+
+    # -----------------------------------------------------------------
+    # Open and inspect
+    # -----------------------------------------------------------------
+    src = _open_raster(in_raster)
+    log.info("  CRS:    %s", src.crs)
+    log.info("  Size:   %d x %d", src.width, src.height)
+    log.info("  Nodata: %s", src.nodata)
+    log.info("  Bounds: %s", src.bounds)
+    audit += [
+        f"CRS={src.crs}",
+        f"WIDTH={src.width}",
+        f"HEIGHT={src.height}",
+        f"NODATA={src.nodata}",
+        f"BOUNDS={src.bounds}",
+    ]
+
+    # Memory warning for large files
+    file_mb = in_raster.stat().st_size / (1 << 20)
+    if file_mb > 500:
+        log.warning(
+            "Large raster (%.0f MiB) — reprojection may use significant RAM.", file_mb
+        )
+
+    # -----------------------------------------------------------------
+    # Read band 1, mask nodata
+    # -----------------------------------------------------------------
+    import os
+    data = src.read(1).astype("float32")
+    if src.nodata is not None:
+        data[data == src.nodata] = np.nan
+    data[~np.isfinite(data)] = np.nan
+
+    # -----------------------------------------------------------------
+    # Reproject to Web Mercator (stable square pixels)
+    # -----------------------------------------------------------------
+    dst_crs = "EPSG:3857"
+    transform, rp_w, rp_h = calculate_default_transform(
+        src.crs, dst_crs, src.width, src.height, *src.bounds
+    )
+    src_transform = src.transform
+    src_crs = src.crs
+    src.close()
+
+    reproj = np.full((rp_h, rp_w), np.nan, dtype="float32")
     reproject(
         source=data,
         destination=reproj,
-        src_transform=src.transform,
-        src_crs=src.crs,
+        src_transform=src_transform,
+        src_crs=src_crs,
         dst_transform=transform,
         dst_crs=dst_crs,
-        resampling=Resampling.bilinear,
+        resampling=resample_alg,
         src_nodata=np.nan,
         dst_nodata=np.nan,
+        num_threads=os.cpu_count() or 1,
     )
-    src.close()
 
-    arr = reproj
-
-    valid = np.isfinite(arr)
+    valid = np.isfinite(reproj)
     if not np.any(valid):
-        fail("Raster contains no valid cells after reprojection.")
+        _fail("Raster contains no valid cells after reprojection.")
 
-    src_min = float(np.nanmin(arr))
-    src_max = float(np.nanmax(arr))
-    audit_lines.append(f"MIN={src_min:.4f}")
-    audit_lines.append(f"MAX={src_max:.4f}")
-    print(f"  Elevation range after reprojection: {src_min:.2f} m – {src_max:.2f} m")
+    src_min = float(np.nanmin(reproj))
+    src_max = float(np.nanmax(reproj))
+    log.info("  Elevation range: %.2f m – %.2f m", src_min, src_max)
+    audit += [f"MIN={src_min:.4f}", f"MAX={src_max:.4f}"]
 
-    # Force underwater / nodata cells to 0 (ocean baseline).
-    # This preserves the island silhouette cleanly.
-    land = arr.copy()
+    # -----------------------------------------------------------------
+    # Ocean baseline: force nodata / negative → 0
+    # -----------------------------------------------------------------
+    land = reproj.copy()
     land[~np.isfinite(land)] = 0.0
     land[land < 0.0] = 0.0
 
-    # Normalize only positive (land) terrain to 0–1.
     land_max = float(np.max(land))
     if land_max <= 0.0:
-        fail("No positive terrain found after ocean baseline conversion. "
-             "Check that the DEM covers Puerto Rico land area.")
+        _fail(
+            "No positive terrain found. Check that the DEM covers Puerto Rico. "
+            "Inspect MIN/MAX in source_audit.txt."
+        )
+    log.info("  Land max: %.2f m (→ pixel 255)", land_max)
 
-    norm = land / land_max
-    norm = np.clip(norm, 0.0, 1.0)
-    print(f"  Land max elevation: {land_max:.2f} m (normalised to 1.0)")
+    # -----------------------------------------------------------------
+    # Normalise 0–1
+    # -----------------------------------------------------------------
+    norm = np.clip(land / land_max, 0.0, 1.0)
 
-    # Resize to fit within TARGET_MAX_DIM while preserving aspect ratio.
-    h, w = norm.shape
-    scale = min(TARGET_MAX_DIM / max(h, w), 1.0)
-    new_w = max(1, int(round(w * scale)))
-    new_h = max(1, int(round(h * scale)))
-    print(f"  Resize: {w}x{h} → {new_w}x{new_h}")
+    # -----------------------------------------------------------------
+    # Resize to target_max_dim (preserve aspect ratio)
+    # -----------------------------------------------------------------
+    rh, rw = norm.shape
+    scale = min(target_max_dim / max(rh, rw), 1.0)
+    new_w = max(1, int(round(rw * scale)))
+    new_h = max(1, int(round(rh * scale)))
+    log.info("  Resize: %dx%d → %dx%d", rw, rh, new_w, new_h)
 
-    # Convert to 8-bit grayscale image (no alpha).
-    img = Image.fromarray((norm * 255).astype("uint8"), mode="L")
-    if (new_w, new_h) != (w, h):
-        img = img.resize((new_w, new_h), resample=Image.Resampling.BILINEAR)
+    # -----------------------------------------------------------------
+    # 8-bit output (always produced)
+    # -----------------------------------------------------------------
+    img8 = Image.fromarray((norm * 255).astype("uint8"), mode="L")
+    if (new_w, new_h) != (rw, rh):
+        img8 = img8.resize((new_w, new_h), resample=Image.Resampling.BILINEAR)
+    img8 = img8.convert("L")
 
-    # Guarantee mode L (no alpha channel).
-    img = img.convert("L")
+    if max(img8.size) > target_max_dim:
+        _fail(f"Resized image {img8.size} exceeds {target_max_dim}px — aborting.")
 
-    if max(img.size) > TARGET_MAX_DIM:
-        fail(f"Resized image {img.size} exceeds {TARGET_MAX_DIM}px — aborting.")
+    hm_path = HM_DIR / "puerto_rico_heightmap.png"
+    img8.save(hm_path)
+    log.info("  Saved 8-bit heightmap: %s", hm_path)
 
-    heightmap_path = HEIGHTMAP_DIR / "puerto_rico_heightmap_2048.png"
-    img.save(heightmap_path)
-    print(f"  Saved heightmap: {heightmap_path}")
+    # -----------------------------------------------------------------
+    # 16-bit output (when requested or always alongside 8-bit)
+    # -----------------------------------------------------------------
+    hm_16_path = HM_DIR / "puerto_rico_heightmap_16bit.png"
+    arr_16 = (norm * 65535).astype(np.uint16)
+    img16_src = Image.fromarray(arr_16.astype(np.int32), mode="I")
+    if (new_w, new_h) != (rw, rh):
+        img16_src = img16_src.resize((new_w, new_h), resample=Image.Resampling.BILINEAR)
+    img16_src.save(hm_16_path)
+    log.info("  Saved 16-bit heightmap: %s", hm_16_path)
 
-    # Machine-readable metadata
+    # -----------------------------------------------------------------
+    # Spawn coordinate
+    # -----------------------------------------------------------------
+    arr8 = np.array(img8)
+    spawn_px, spawn_pz = _find_spawn_pixel(arr8)
+    spawn_y = sea_level + 1
+    log.info("  Spawn: block X=%d, Y=%d, Z=%d", spawn_px, spawn_y, spawn_pz)
+
+    # -----------------------------------------------------------------
+    # Metadata (relative paths)
+    # -----------------------------------------------------------------
     metadata = {
-        "input_raster": str(in_raster),
+        "input_raster": str(in_raster.relative_to(ROOT)),
         "source_min_m": round(src_min, 4),
         "source_max_m": round(src_max, 4),
         "land_max_m": round(land_max, 4),
-        "output_width": img.width,
-        "output_height": img.height,
-        "sea_level_block": SEA_LEVEL_BLOCK,
-        "output_mode": img.mode,
+        "output_width": img8.width,
+        "output_height": img8.height,
+        "sea_level_block": sea_level,
+        "max_height": max_height,
+        "minecraft_version": mc_version,
+        "output_mode": img8.mode,
+        "spawn_x": spawn_px,
+        "spawn_y": spawn_y,
+        "spawn_z": spawn_pz,
         "notes": [
-            "Underwater and nodata cells were forced to 0 baseline (ocean)",
-            "Land elevation normalized: 0 m → pixel 0, land_max_m → pixel 255",
+            "Underwater and nodata cells forced to 0 baseline (ocean)",
+            "Land elevation normalised: 0 m → pixel 0, land_max_m → pixel 255 (8-bit) / 65535 (16-bit)",
             "Output is 8-bit grayscale (mode L) without alpha channel",
+            "16-bit variant also available: puerto_rico_heightmap_16bit.png",
+            "Spawn coordinates are pixel-to-block (X=col, Z=row); Y is approximate surface",
             "Designed for WorldPainter heightmap import with linear mapping",
         ],
     }
-    meta_path = HEIGHTMAP_DIR / "heightmap_metadata.json"
+    meta_path = HM_DIR / "heightmap_metadata.json"
     meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    # Append audit info
-    audit_lines.append(f"LAND_MAX={land_max:.4f}")
-    audit_lines.append(f"OUTPUT_WIDTH={img.width}")
-    audit_lines.append(f"OUTPUT_HEIGHT={img.height}")
-    audit_lines.append(f"OUTPUT_FILE={heightmap_path}")
-
-    # Preserve existing source audit lines; merge if file already exists
+    # -----------------------------------------------------------------
+    # Audit log — append new run section atomically
+    # -----------------------------------------------------------------
+    audit += [
+        f"LAND_MAX={land_max:.4f}",
+        f"OUTPUT_WIDTH={img8.width}",
+        f"OUTPUT_HEIGHT={img8.height}",
+        f"SPAWN_X={spawn_px}",
+        f"SPAWN_Z={spawn_pz}",
+        f"OUTPUT_FILE={hm_path.relative_to(ROOT)}",
+    ]
     audit_path = LOG_DIR / "source_audit.txt"
-    existing = ""
-    if audit_path.exists():
-        existing = audit_path.read_text(encoding="utf-8").strip()
-    combined = existing + "\n" + "\n".join(audit_lines) if existing else "\n".join(audit_lines)
-    write_text(audit_path, combined.strip() + "\n")
+    existing = audit_path.read_text(encoding="utf-8").rstrip() if audit_path.exists() else ""
+    new_section = "\n".join(audit)
+    combined = (existing + "\n\n" + new_section).lstrip()
+    tmp = audit_path.with_suffix(".tmp")
+    tmp.write_text(combined + "\n", encoding="utf-8")
+    tmp.rename(audit_path)
 
-    # WorldPainter import instructions
-    write_text(
-        WORLDPAINTER_DIR / "import_settings.txt",
-        "\n".join([
-            "WorldPainter Heightmap Import Settings",
-            "======================================",
-            "",
-            "Heightmap file: output/heightmap/puerto_rico_heightmap_2048.png",
-            "Format:         8-bit grayscale PNG (no alpha)",
-            "Mapping:        Linear",
-            "Smoothing:      DISABLED (uncheck 'smooth terrain' on import)",
-            "Water level:    62 (Minecraft block height)",
-            "World type:     Surface",
-            "",
-            "Import steps (WorldPainter GUI):",
-            "  1. File > Import > Import Height Map...",
-            "  2. Select: output/heightmap/puerto_rico_heightmap_2048.png",
-            "  3. Verify 'Grayscale' is selected (not RGBA)",
-            "  4. Set 'Maximum height' to 255 (or your preferred ceiling)",
-            "  5. Set 'Water level' to 62",
-            "  6. Uncheck 'Smooth terrain'",
-            "  7. Leave scale as default (one pixel = one block)",
-            "  8. Click Import",
-            "",
-            "Spawn recommendation:",
-            "  Place spawn in the northeast quadrant (San Juan / Loíza area)",
-            "  Ensure spawn is on solid land above water level 62",
-            "  Use WorldPainter Spawn Point tool to confirm placement",
-            "",
-            "Export:",
-            "  File > Export > Export as Minecraft world...",
-            "  Choose Minecraft Java Edition format",
-            "  Set seed to any value (terrain is heightmap-driven)",
-            "",
-            "If the import looks curved or distorted:",
-            "  - Confirm PNG mode is L (grayscale, no alpha)",
-            "  - Confirm Linear mapping is selected (not logarithmic)",
-            "  - Re-import with Smooth terrain DISABLED",
-        ]) + "\n"
+    # -----------------------------------------------------------------
+    # WorldPainter import settings
+    # -----------------------------------------------------------------
+    _write_worldpainter_settings(
+        hm_name=hm_path.name,
+        spawn_x=spawn_px,
+        spawn_y=spawn_y,
+        spawn_z=spawn_pz,
+        sea_level=sea_level,
+        max_height=max_height,
+        mc_version=mc_version,
     )
 
-    print("\nHEIGHTMAP_OK")
-    print(str(heightmap_path))
+    log.info("\nHEIGHTMAP_OK")
+    log.info("%s", hm_path)
 
 
 if __name__ == "__main__":
