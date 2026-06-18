@@ -20,12 +20,17 @@ Options:
 
 import argparse
 import logging
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 from tools._config import ROOT
+
+# Ensure child processes can import the tools package regardless of how
+# the orchestrator was invoked (direct python call, make, CI, etc.)
+_CHILD_ENV = {**os.environ, "PYTHONPATH": str(ROOT)}
 
 log = logging.getLogger(__name__)
 
@@ -53,7 +58,7 @@ def _run_step(name: str, extra_args: list[str], verbose: bool) -> tuple[bool, fl
 
     log.info("\n>>> %s", " ".join(str(c) for c in cmd))
     t0 = time.monotonic()
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, env=_CHILD_ENV)
     elapsed = time.monotonic() - t0
     success = result.returncode == 0
     return success, elapsed

@@ -1,5 +1,6 @@
 PYTHON := .venv/bin/python
 PIP    := .venv/bin/pip
+export PYTHONPATH := $(CURDIR)
 
 .PHONY: all fetch build validate preview run clean venv install
 

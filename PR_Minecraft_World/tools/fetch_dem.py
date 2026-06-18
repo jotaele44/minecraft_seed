@@ -239,9 +239,11 @@ def _try_usgs(cfg: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def _generate_synthetic() -> None:
+    import os
     log.info("\n[3/3] Falling back to synthetic DEM generator …")
     script = Path(__file__).parent / "generate_synthetic_dem.py"
-    result = subprocess.run([sys.executable, str(script)])
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    result = subprocess.run([sys.executable, str(script)], env=env)
     if result.returncode != 0:
         _fail("Synthetic DEM generation failed. Check generate_synthetic_dem.py.")
     if not (OUT_FILE.exists() and OUT_FILE.stat().st_size > 1024):

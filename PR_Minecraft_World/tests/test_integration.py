@@ -8,6 +8,7 @@ Verifies:
   - preview_heightmap.py produces a preview PNG
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,11 +19,12 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
+_ENV = {**os.environ, "PYTHONPATH": str(ROOT)}
 
 
 def _run(script: str, extra: list[str] | None = None) -> subprocess.CompletedProcess:
     cmd = [PYTHON, str(ROOT / "tools" / script)] + (extra or [])
-    return subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT)
+    return subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, env=_ENV)
 
 
 class TestFullPipeline:
