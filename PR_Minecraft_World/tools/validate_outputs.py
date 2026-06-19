@@ -86,10 +86,14 @@ def validate_heightmap(meta: dict) -> None:
     if arr.min() == arr.max():
         _fail(f"PNG is flat (all pixels = {arr.min()}) — normalisation failed")
 
-    land_frac = float((arr > 10).sum()) / arr.size
+    # With dual bathymetry normalisation, "land" starts at sea_level_block (pixel 62).
+    # Without bathymetry, the old threshold (>10) still works but we use sea_level
+    # from metadata when available so the check is always semantically correct.
+    sea_px = meta.get("sea_level_block", 10)
+    land_frac = float((arr >= sea_px).sum()) / arr.size
     if land_frac < 0.01:
         _fail(
-            f"Only {land_frac*100:.2f}% of pixels > 10 — check DEM covers Puerto Rico land area"
+            f"Only {land_frac*100:.2f}% of pixels ≥ {sea_px} — check DEM covers Puerto Rico land area"
         )
 
     # Cross-check dimensions against metadata

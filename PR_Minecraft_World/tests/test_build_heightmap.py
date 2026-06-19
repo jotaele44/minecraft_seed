@@ -172,3 +172,55 @@ class TestCRSFallback:
             assert in_wgs84_range, f"Bounds {b} should be in WGS84 range"
             assumed = rasterio.crs.CRS.from_epsg(4326)
             assert assumed is not None
+
+
+class TestBathyNorm:
+    """Verify the dual normalisation logic used when include_bathymetry=True."""
+
+    SEA = 62
+    MAX_H = 127
+    MAX_D = 500.0  # m
+
+    def _dual_norm(self, elev: float) -> float:
+        """Mirror of the dual-normalisation formula in build_heightmap.main().
+
+        Returns a value in [0, 1]; multiply by 255 to get the pixel value.
+        Ocean: [-MAX_D, 0] → pixel [0, SEA-1]
+        Land:  [0, 1338]  → pixel [SEA, MAX_H]
+        """
+        land_max = 1338.0
+        S = self.SEA    # 62
+        H = self.MAX_H  # 127
+        D = self.MAX_D  # 500.0
+        if elev < 0.0:
+            return max(0.0, (elev + D) / D * (S / 255.0))
+        else:
+            return S / 255.0 + min(
+                elev / land_max * ((H - S) / 255.0),
+                (H - S) / 255.0,
+            )
+
+    def test_deep_ocean_maps_near_zero(self):
+        """Max depth should map to pixel ≈ 0."""
+        pixel = int(self._dual_norm(-self.MAX_D) * 255)
+        assert pixel == 0
+
+    def test_ocean_pixel_below_sea_level(self):
+        """Any negative elevation should map to pixel < sea_level_block."""
+        pixel = int(self._dual_norm(-100.0) * 255)
+        assert pixel < self.SEA
+
+    def test_land_pixel_at_or_above_sea_level(self):
+        """Positive elevation should map to pixel ≥ sea_level_block."""
+        pixel = int(self._dual_norm(500.0) * 255)
+        assert pixel >= self.SEA
+
+    def test_coast_maps_to_sea_level_pixel(self):
+        """0 m elevation (coastline) should map to exactly sea_level_block."""
+        pixel = int(round(self._dual_norm(0.0) * 255))
+        assert pixel == self.SEA
+
+    def test_land_peak_maps_to_max_height(self):
+        """Peak elevation (1338 m) should map to max_height pixel."""
+        pixel = int(round(self._dual_norm(1338.0) * 255))
+        assert pixel == self.MAX_H

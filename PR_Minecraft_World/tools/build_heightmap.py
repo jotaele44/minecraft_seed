@@ -150,6 +150,10 @@ def _write_worldpainter_settings(
     m_per_block_x: float = 0.0,
     m_per_block_z: float = 0.0,
     m_per_block_y: float = 0.0,
+    include_bathy: bool = False,
+    m_per_block_y_land: float = 0.0,
+    m_per_block_y_ocean: float = 0.0,
+    max_ocean_depth_m: float = 0.0,
 ) -> None:
     lines = [
         "WorldPainter Heightmap Import Settings",
@@ -167,11 +171,35 @@ def _write_worldpainter_settings(
         "  pre-1.18 → water level 62, max height 255",
         "  1.18+    → water level 63, max height 384  (update values above)",
         "",
+        "Pixel value → terrain mapping:",
+        *(
+            [
+                f"  Pixels  0 – {sea_level-1:3d}  →  ocean depth "
+                f"(0 = deepest ~{max_ocean_depth_m:.0f} m, {sea_level-1} = near surface)",
+                f"  Pixel  {sea_level:3d}        →  sea level / coastline",
+                f"  Pixels {sea_level:3d} – {max_height:3d}  →  land elevation "
+                f"(0 m at coast → peak at {max_height})",
+            ] if include_bathy else
+            [
+                "  Pixel   0          →  ocean floor (flat)",
+                f"  Pixel  {max_height:3d}        →  land peak",
+            ]
+        ),
+        "",
         "Scale conversion (block ↔ real world):",
-        f"  1 block (X/Z) ≈ {m_per_block_x:.1f} m horizontal",
-        f"  1 block (Y)   ≈ {m_per_block_y:.2f} m elevation",
-        f"  Real-world distance = block_count × {m_per_block_x:.1f} m",
-        f"  Real-world elevation = (block_Y - {sea_level}) × {m_per_block_y:.2f} m",
+        f"  1 block (X/Z)    ≈ {m_per_block_x:.1f} m horizontal",
+        *(
+            [
+                f"  1 block (Y) land  ≈ {m_per_block_y_land:.2f} m elevation",
+                f"  1 block (Y) ocean ≈ {m_per_block_y_ocean:.2f} m depth",
+                f"  Real-world land elevation  = (block_Y - {sea_level}) × {m_per_block_y_land:.2f} m",
+                f"  Real-world ocean depth     = ({sea_level} - block_Y) × {m_per_block_y_ocean:.2f} m",
+            ] if include_bathy else
+            [
+                f"  1 block (Y)       ≈ {m_per_block_y:.2f} m elevation",
+                f"  Real-world elevation = block_Y × {m_per_block_y:.2f} m",
+            ]
+        ),
         "",
         "Import steps (WorldPainter GUI):",
         "  1. File > Import > Import Height Map...",
@@ -332,24 +360,53 @@ def main(bits_override: int | None = None) -> None:
     audit += [f"MIN={src_min:.4f}", f"MAX={src_max:.4f}"]
 
     # -----------------------------------------------------------------
-    # Ocean baseline: force nodata / negative → 0
+    # Normalise: dual mode (land + ocean) or legacy (land only)
     # -----------------------------------------------------------------
-    land = reproj.copy()
-    land[~np.isfinite(land)] = 0.0
-    land[land < 0.0] = 0.0
+    include_bathy = cfg["heightmap"].get("include_bathymetry", False)
+    max_ocean_depth = float(cfg["heightmap"].get("max_ocean_depth_m", 500))
 
-    land_max = float(np.max(land))
+    filled = reproj.copy()
+    filled[~np.isfinite(filled)] = 0.0
+
+    land_max = float(np.max(np.maximum(filled, 0.0)))
     if land_max <= 0.0:
         _fail(
             "No positive terrain found. Check that the DEM covers Puerto Rico. "
             "Inspect MIN/MAX in source_audit.txt."
         )
-    log.info("  Land max: %.2f m (→ pixel 255)", land_max)
 
-    # -----------------------------------------------------------------
-    # Normalise 0–1
-    # -----------------------------------------------------------------
-    norm = np.clip(land / land_max, 0.0, 1.0)
+    norm = np.zeros_like(filled, dtype="float32")
+
+    if include_bathy:
+        # norm is a [0, 1] fraction multiplied by 255 to get pixel value.
+        # Ocean:  [-max_ocean_depth, 0] → pixel [0,          sea_level - 1]
+        # Land:   [0, land_max]         → pixel [sea_level,  max_height   ]
+        ocean_mask = filled < 0.0
+        land_mask  = ~ocean_mask
+
+        norm[ocean_mask] = np.clip(
+            (filled[ocean_mask] + max_ocean_depth) / max_ocean_depth * (sea_level / 255.0),
+            0.0,
+            (sea_level - 1) / 255.0,
+        )
+        norm[land_mask] = sea_level / 255.0 + np.clip(
+            filled[land_mask] / land_max * ((max_height - sea_level) / 255.0),
+            0.0,
+            (max_height - sea_level) / 255.0,
+        )
+        log.info(
+            "  Land max: %.2f m (→ pixel %d)  |  ocean capped at %.0f m (→ pixel 0)",
+            land_max, max_height, max_ocean_depth,
+        )
+        log.info(
+            "  Pixel mapping: 0–%d = ocean, %d = coast, %d–%d = land",
+            sea_level - 1, sea_level, sea_level, max_height,
+        )
+    else:
+        # Legacy: flat ocean floor at pixel 0
+        filled[filled < 0.0] = 0.0
+        norm = np.clip(filled / land_max, 0.0, 1.0)
+        log.info("  Land max: %.2f m (→ pixel %d)", land_max, max_height)
 
     # -----------------------------------------------------------------
     # Resize to target_max_dim (preserve aspect ratio)
@@ -390,7 +447,9 @@ def main(bits_override: int | None = None) -> None:
     # Spawn coordinate
     # -----------------------------------------------------------------
     arr8 = np.array(img8)
-    spawn_px, spawn_pz = _find_spawn_pixel(arr8)
+    # With bathymetry, land pixels start at sea_level value (62); use that as threshold
+    spawn_sea_px = sea_level if include_bathy else 10
+    spawn_px, spawn_pz = _find_spawn_pixel(arr8, sea_px=spawn_sea_px)
     spawn_y = sea_level + 1
     log.info("  Spawn: block X=%d, Y=%d, Z=%d", spawn_px, spawn_y, spawn_pz)
 
@@ -398,20 +457,44 @@ def main(bits_override: int | None = None) -> None:
     # Scale conversion factors (block ↔ real-world metres)
     # The reprojected raster spans the bounding box in EPSG:3857 metres.
     # Dividing that span by the output pixel count gives m/block.
+    # With dual normalization, land and ocean have different vertical scales.
     # -----------------------------------------------------------------
     reproj_width_m  = abs(transform.c + transform.a * rp_w - transform.c)
     reproj_height_m = abs(transform.f + transform.e * rp_h - transform.f)
     m_per_block_x = reproj_width_m  / img8.width  if img8.width  > 0 else 0.0
     m_per_block_z = reproj_height_m / img8.height if img8.height > 0 else 0.0
-    m_per_block_y = land_max / max_height if max_height > 0 else 0.0
+    land_px_count  = max_height - sea_level   # pixel levels allocated to land
+    ocean_px_count = sea_level                # pixel levels allocated to ocean
+    m_per_block_y_land  = land_max / land_px_count  if land_px_count  > 0 else 0.0
+    m_per_block_y_ocean = (max_ocean_depth / ocean_px_count if ocean_px_count > 0 else 0.0
+                           ) if include_bathy else None
     log.info(
-        "  Scale: %.1f m/block (X), %.1f m/block (Z), %.2f m/block (Y)",
-        m_per_block_x, m_per_block_z, m_per_block_y,
+        "  Scale: %.1f m/block (X/Z)  |  land %.2f m/block (Y)  |  ocean %s m/block (Y)",
+        m_per_block_x,
+        m_per_block_y_land,
+        f"{m_per_block_y_ocean:.2f}" if m_per_block_y_ocean is not None else "n/a",
     )
 
     # -----------------------------------------------------------------
     # Metadata (relative paths)
     # -----------------------------------------------------------------
+    scale_section: dict = {
+        "m_per_block_x": round(m_per_block_x, 2),
+        "m_per_block_z": round(m_per_block_z, 2),
+        "m_per_block_y_land": round(m_per_block_y_land, 4),
+        "description": (
+            "Multiply block coords by m_per_block values to get real-world metres. "
+            f"Sea level = block Y {sea_level}. "
+            f"Pixels 0–{sea_level-1} = ocean depth, "
+            f"pixels {sea_level}–{max_height} = land elevation."
+            if include_bathy else
+            "Multiply block coords by m_per_block_x/z to get real-world metres."
+        ),
+    }
+    if m_per_block_y_ocean is not None:
+        scale_section["m_per_block_y_ocean"] = round(m_per_block_y_ocean, 4)
+        scale_section["max_ocean_depth_m"] = max_ocean_depth
+
     metadata = {
         "input_raster": str(in_raster.relative_to(ROOT)),
         "source_min_m": round(src_min, 4),
@@ -426,18 +509,16 @@ def main(bits_override: int | None = None) -> None:
         "spawn_x": spawn_px,
         "spawn_y": spawn_y,
         "spawn_z": spawn_pz,
-        "scale": {
-            "m_per_block_x": round(m_per_block_x, 2),
-            "m_per_block_z": round(m_per_block_z, 2),
-            "m_per_block_y": round(m_per_block_y, 4),
-            "description": (
-                "Multiply block coords by m_per_block_x/z/y to get real-world metres. "
-                "E.g. block_x * m_per_block_x = easting metres from west edge of island."
-            ),
-        },
+        "bathymetry_enabled": include_bathy,
+        "scale": scale_section,
         "notes": [
-            "Underwater and nodata cells forced to 0 baseline (ocean)",
-            "Land elevation normalised: 0 m → pixel 0, land_max_m → pixel 255 (8-bit) / 65535 (16-bit)",
+            (
+                f"Dual normalisation: pixels 0–{sea_level-1} = ocean depth "
+                f"(0=deepest, {sea_level-1}=near-surface), "
+                f"pixel {sea_level} = coast/sea level, "
+                f"pixels {sea_level}–{max_height} = land elevation"
+            ) if include_bathy else
+            "Underwater and nodata cells forced to pixel 0 (flat ocean floor)",
             "Output is 8-bit grayscale (mode L) without alpha channel",
             "16-bit variant also available: puerto_rico_heightmap_16bit.png",
             "Spawn coordinates are pixel-to-block (X=col, Z=row); Y is approximate surface",
@@ -479,7 +560,11 @@ def main(bits_override: int | None = None) -> None:
         mc_version=mc_version,
         m_per_block_x=m_per_block_x,
         m_per_block_z=m_per_block_z,
-        m_per_block_y=m_per_block_y,
+        m_per_block_y=m_per_block_y_land,
+        include_bathy=include_bathy,
+        m_per_block_y_land=m_per_block_y_land,
+        m_per_block_y_ocean=m_per_block_y_ocean or 0.0,
+        max_ocean_depth_m=max_ocean_depth if include_bathy else 0.0,
     )
 
     log.info("\nHEIGHTMAP_OK")

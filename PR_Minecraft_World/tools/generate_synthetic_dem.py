@@ -143,6 +143,30 @@ TERRAIN_FEATURES = [
     (-65.750, 18.340,   30, 0.040),
 ]
 
+# ---------------------------------------------------------------------------
+# Bathymetric features: (lon, lat, depth_m, sigma_deg)
+# depth_m is NEGATIVE (below sea level).
+# Gaussians represent shelf drop-offs and basin floors within the bounding box.
+# Within this box (17.88–18.55°N), the Puerto Rico Trench (~19.5°N) is out of
+# range; depths modelled here represent the shelf and upper Caribbean basin.
+# ---------------------------------------------------------------------------
+BATHYMETRY_FEATURES = [
+    # Northern continental shelf (within ~6 km of north coast at box top)
+    (-66.50, 18.56, -180, 0.07),
+    (-66.00, 18.56, -150, 0.07),
+    (-67.00, 18.55, -120, 0.06),
+    (-65.75, 18.54, -140, 0.06),
+    # Southern Caribbean basin (bottom edge of bounding box)
+    (-66.50, 17.89, -420, 0.10),
+    (-66.00, 17.89, -380, 0.10),
+    (-66.80, 17.89, -350, 0.08),
+    (-65.80, 17.90, -320, 0.08),
+    # East shelf (minimal ocean strip inside bounding box)
+    (-65.60, 18.20, -300, 0.07),
+    # West (Mona Passage area)
+    (-67.29, 18.20, -250, 0.07),
+]
+
 
 def _lon_to_px(lon: float) -> float:
     return (lon - LON_MIN) / (LON_MAX - LON_MIN) * WIDTH
@@ -161,16 +185,27 @@ def _build_coastline_mask() -> np.ndarray:
     return np.array(img, dtype=bool)
 
 
-def _build_elevation_grid() -> np.ndarray:
+def _build_elevation_grid() -> tuple[np.ndarray, np.ndarray]:
+    """Return (land_elev, ocean_depth) grids.
+
+    land_elev:  Gaussian peaks for land features (positive values).
+    ocean_depth: Gaussian wells for bathymetric features (negative values, 0 = sea level).
+    """
     lons = np.linspace(LON_MIN, LON_MAX, WIDTH,  endpoint=True)
     lats = np.linspace(LAT_MAX, LAT_MIN, HEIGHT, endpoint=True)
     lon_grid, lat_grid = np.meshgrid(lons, lats)
 
-    elev = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    land_elev = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
     for clon, clat, peak_m, sigma_deg in TERRAIN_FEATURES:
         dist2 = (lon_grid - clon) ** 2 + (lat_grid - clat) ** 2
-        elev = np.maximum(elev, peak_m * np.exp(-dist2 / (2 * sigma_deg ** 2)))
-    return elev
+        land_elev = np.maximum(land_elev, peak_m * np.exp(-dist2 / (2 * sigma_deg ** 2)))
+
+    ocean_depth = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    for clon, clat, depth_m, sigma_deg in BATHYMETRY_FEATURES:
+        dist2 = (lon_grid - clon) ** 2 + (lat_grid - clat) ** 2
+        ocean_depth = np.minimum(ocean_depth, depth_m * np.exp(-dist2 / (2 * sigma_deg ** 2)))
+
+    return land_elev, ocean_depth
 
 
 def main() -> None:
@@ -182,14 +217,21 @@ def main() -> None:
     mask = _build_coastline_mask()
     log.info("  Land fraction: %.1f%%", mask.sum() / mask.size * 100)
 
-    log.info("Building elevation grid …")
-    elev = _build_elevation_grid()
-    elev[~mask] = -1.0
+    log.info("Building elevation + bathymetry grids …")
+    land_elev, ocean_depth = _build_elevation_grid()
+
+    # Combine: land pixels use positive elevation, ocean pixels use depth
+    elev = land_elev.copy()
+    elev[~mask] = ocean_depth[~mask]
 
     elev_land = elev[mask]
+    elev_ocean = elev[~mask]
     elev_min = float(elev_land.min()) if elev_land.size else 0.0
     elev_max = float(elev_land.max()) if elev_land.size else 0.0
-    log.info("  Elevation range (land): %.1f m – %.1f m", elev_min, elev_max)
+    bathy_min = float(elev_ocean.min()) if elev_ocean.size else 0.0
+    bathy_max = float(elev_ocean.max()) if elev_ocean.size else 0.0
+    log.info("  Land elevation: %.1f m – %.1f m", elev_min, elev_max)
+    log.info("  Ocean depth:    %.1f m – %.1f m", bathy_min, bathy_max)
 
     log.info("Saving GeoTIFF: %s", OUT_FILE)
     transform = from_bounds(LON_MIN, LAT_MIN, LON_MAX, LAT_MAX, WIDTH, HEIGHT)
@@ -199,7 +241,7 @@ def main() -> None:
         count=1, dtype="float32",
         crs=CRS.from_epsg(4326),
         transform=transform,
-        nodata=-1.0,
+        nodata=-9999.0,
     ) as dst:
         dst.write(elev, 1)
 
@@ -217,8 +259,12 @@ def main() -> None:
         f"BOUNDS=({LON_MIN}, {LAT_MIN}, {LON_MAX}, {LAT_MAX})",
         f"ELEV_MIN={elev_min:.2f}",
         f"ELEV_MAX={elev_max:.2f}",
+        f"BATHY_MIN={bathy_min:.2f}",
+        f"BATHY_MAX={bathy_max:.2f}",
         "NOTE=Coastline from 34 cartographic reference points",
-        "NOTE=Elevation from Gaussian peaks at known locations",
+        "NOTE=Land elevation from Gaussian peaks at known locations",
+        "NOTE=Ocean depth from Gaussian wells (continental shelf + basin approximation)",
+        "NOTE=Puerto Rico Trench (~8400 m, 19.5°N) is north of bounding box — not modelled",
         "NOTE=Replace with official NOAA CUDEM or USGS 3DEP DEM for production quality",
     ]
     tmp = LOG_DIR / "source_audit.tmp"

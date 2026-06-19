@@ -20,6 +20,8 @@ _DEFAULTS: dict = {
         "target_max_dim": 2048,
         "bits": 8,
         "resampling": "bilinear",
+        "include_bathymetry": True,
+        "max_ocean_depth_m": 500,
     },
     "minecraft": {
         "version": "pre-1.18",

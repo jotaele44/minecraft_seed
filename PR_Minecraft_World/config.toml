@@ -17,6 +17,11 @@ target_max_dim = 1024
 bits = 8
 # Resampling algorithm for reprojection: bilinear | nearest | cubic
 resampling = "bilinear"
+# Include seafloor bathymetry in the heightmap
+# Pixels 0–(sea_level-1) = ocean depth, pixel sea_level = coast, sea_level–max_height = land
+include_bathymetry = true
+# Ocean depths beyond this value are clamped (keeps shelf + upper slope visible)
+max_ocean_depth_m = 500
 
 [minecraft]
 # "pre-1.18"  → sea level 62, world height 0–255
