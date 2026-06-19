@@ -1,0 +1,34 @@
+SOURCE=SYNTHETIC (network unavailable; modeled from known geographic features)
+GENERATOR=tools/generate_synthetic_dem.py
+FILE=puerto_rico_official_dem.tif
+SIZE_BYTES=6575180
+CRS=EPSG:4326
+WIDTH=2048
+HEIGHT=802
+BOUNDS=(-67.3, 17.88, -65.59, 18.55)
+ELEV_MIN=1.48
+ELEV_MAX=1337.97
+BATHY_MIN=-420.00
+BATHY_MAX=-0.00
+NOTE=Coastline from 34 cartographic reference points
+NOTE=Land elevation from Gaussian peaks at known locations
+NOTE=Ocean depth from Gaussian wells (continental shelf + basin approximation)
+NOTE=Puerto Rico Trench (~8400 m, 19.5°N) is north of bounding box — not modelled
+NOTE=Replace with official NOAA CUDEM or USGS 3DEP DEM for production quality
+
+--- RUN 2026-06-19T01:22:40Z ---
+INPUT=data/raw/puerto_rico_official_dem.tif
+CRS=EPSG:4326
+WIDTH=2048
+HEIGHT=802
+NODATA=-9999.0
+BOUNDS=BoundingBox(left=-67.3, bottom=17.88, right=-65.59, top=18.55)
+CRS_ASSUMED=False
+MIN=-419.9957
+MAX=1337.9680
+LAND_MAX=1337.9680
+OUTPUT_WIDTH=1024
+OUTPUT_HEIGHT=423
+SPAWN_X=776
+SPAWN_Z=144
+OUTPUT_FILE=output/heightmap/puerto_rico_heightmap.png

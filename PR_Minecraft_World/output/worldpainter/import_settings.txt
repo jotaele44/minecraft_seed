@@ -1,0 +1,55 @@
+WorldPainter Heightmap Import Settings
+======================================
+
+Heightmap file:  output/heightmap/puerto_rico_heightmap.png
+Format:          8-bit grayscale PNG (no alpha)  [or 16-bit if _16bit variant used]
+Mapping:         Linear
+Smoothing:       DISABLED (uncheck 'smooth terrain' on import)
+Water level:     62 (Minecraft block height)
+Maximum height:  127
+World type:      Surface
+
+Minecraft version target: pre-1.18
+  pre-1.18 → water level 62, max height 255
+  1.18+    → water level 63, max height 384  (update values above)
+
+Pixel value → terrain mapping:
+  Pixels  0 –  61  →  ocean depth (0 = deepest ~500 m, 61 = near surface)
+  Pixel   62        →  sea level / coastline
+  Pixels  62 – 127  →  land elevation (0 m at coast → peak at 127)
+
+Scale conversion (block ↔ real world):
+  1 block (X/Z)    ≈ 185.9 m horizontal
+  1 block (Y) land  ≈ 20.58 m elevation
+  1 block (Y) ocean ≈ 8.06 m depth
+  Real-world land elevation  = (block_Y - 62) × 20.58 m
+  Real-world ocean depth     = (62 - block_Y) × 8.06 m
+
+Import steps (WorldPainter GUI):
+  1. File > Import > Import Height Map...
+  2. Select: output/heightmap/puerto_rico_heightmap.png
+  3. Verify 'Grayscale' is selected (not RGBA)
+  4. Set 'Maximum height' to 127
+  5. Set 'Water level' to 62
+  6. Uncheck 'Smooth terrain'
+  7. Leave scale as default (1 pixel = 1 block)
+  8. Click Import
+
+CLI alternative (WorldPainter command-line):
+  worldpainter -import output/heightmap/puerto_rico_heightmap.png \
+               --config output/worldpainter/worldpainter_import.properties
+
+Computed spawn (set this in WorldPainter Spawn Point tool):
+  Block X = 776
+  Block Y = 63  (approximate surface; WorldPainter will adjust)
+  Block Z = 144
+  Region:  northeast quadrant (San Juan / Loíza area)
+
+Export:
+  File > Export > Export as Minecraft world...
+  Choose Minecraft Java Edition format
+
+Troubleshooting:
+  Curved/distorted import → confirm PNG is mode L, mapping is Linear, smoothing off
+  Blank world            → check source_audit.txt for elevation range
+  Wrong sea level        → update water level to match your Minecraft version
