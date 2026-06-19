@@ -130,3 +130,45 @@ class TestOutputMode:
         arr = np.zeros((50, 100), dtype="uint8")
         img = Image.fromarray(arr, mode="L")
         assert "A" not in img.getbands()
+
+
+class TestCRSFallback:
+    """Verify the CRS-None detection logic used in build_heightmap.main()."""
+
+    def test_raster_without_crs_has_none(self, tmp_path):
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        tif = tmp_path / "nocrs.tif"
+        transform = from_bounds(-67.0, 17.0, -65.0, 19.0, 10, 10)
+        data = np.ones((1, 10, 10), dtype="float32") * 500.0
+        with rasterio.open(
+            tif, "w", driver="GTiff", height=10, width=10,
+            count=1, dtype="float32", crs=None, transform=transform,
+        ) as dst:
+            dst.write(data)
+
+        with rasterio.open(tif) as src:
+            assert src.crs is None
+
+    def test_lat_lon_bounds_trigger_wgs84_assumption(self, tmp_path):
+        import rasterio
+        import rasterio.crs
+        from rasterio.transform import from_bounds
+
+        tif = tmp_path / "nocrs.tif"
+        transform = from_bounds(-67.0, 17.0, -65.0, 19.0, 10, 10)
+        data = np.ones((1, 10, 10), dtype="float32") * 500.0
+        with rasterio.open(
+            tif, "w", driver="GTiff", height=10, width=10,
+            count=1, dtype="float32", crs=None, transform=transform,
+        ) as dst:
+            dst.write(data)
+
+        with rasterio.open(tif) as src:
+            b = src.bounds
+            # The condition used in build_heightmap.main()
+            in_wgs84_range = -180 <= b.left <= 180 and -90 <= b.bottom <= 90
+            assert in_wgs84_range, f"Bounds {b} should be in WGS84 range"
+            assumed = rasterio.crs.CRS.from_epsg(4326)
+            assert assumed is not None

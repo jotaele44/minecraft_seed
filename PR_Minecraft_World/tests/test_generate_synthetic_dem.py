@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 import rasterio
-import tempfile
-from pathlib import Path
+import rasterio.crs
+from rasterio.transform import from_bounds
 from PIL import Image, ImageDraw
 
 # Import functions under test
@@ -14,7 +14,7 @@ from tools.generate_synthetic_dem import (
     TERRAIN_FEATURES,
     WIDTH,
     HEIGHT,
-    OUT_FILE,
+    LON_MIN, LAT_MIN, LON_MAX, LAT_MAX,
 )
 
 
@@ -64,19 +64,34 @@ class TestElevationGrid:
 
 
 class TestSyntheticGeoTiff:
-    def test_output_is_valid_geotiff(self):
-        """The generated file should open as a valid rasterio dataset."""
-        if not OUT_FILE.exists():
-            pytest.skip("Synthetic DEM not yet generated; run fetch_dem.py first")
-        with rasterio.open(OUT_FILE) as src:
+    """Tests write a fresh GeoTIFF to a temp dir — independent of any cached DEM."""
+
+    def _make_tif(self, tmp_path):
+        mask = _build_coastline_mask()
+        elev = _build_elevation_grid()
+        elev[~mask] = -1.0
+        tif = tmp_path / "synthetic_test.tif"
+        transform = from_bounds(LON_MIN, LAT_MIN, LON_MAX, LAT_MAX, WIDTH, HEIGHT)
+        with rasterio.open(
+            tif, "w", driver="GTiff", height=HEIGHT, width=WIDTH,
+            count=1, dtype="float32",
+            crs=rasterio.crs.CRS.from_epsg(4326),
+            transform=transform,
+            nodata=-1.0,
+        ) as dst:
+            dst.write(elev, 1)
+        return tif
+
+    def test_output_is_valid_geotiff(self, tmp_path):
+        tif = self._make_tif(tmp_path)
+        with rasterio.open(tif) as src:
             assert src.count == 1
             assert src.crs is not None
             assert src.nodata == -1.0
 
-    def test_elevation_range_positive(self):
-        if not OUT_FILE.exists():
-            pytest.skip("Synthetic DEM not yet generated")
-        with rasterio.open(OUT_FILE) as src:
+    def test_elevation_range_positive(self, tmp_path):
+        tif = self._make_tif(tmp_path)
+        with rasterio.open(tif) as src:
             data = src.read(1)
             land = data[data != src.nodata]
-            assert land.max() > 1000, "Expected PR terrain above 1000 m"
+            assert land.max() > 1000, f"Expected PR terrain above 1000 m, got {land.max():.0f}"
