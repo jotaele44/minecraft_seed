@@ -13,6 +13,7 @@ from tools.generate_synthetic_dem import (
     _build_elevation_grid,
     TERRAIN_FEATURES,
     BATHYMETRY_FEATURES,
+    ISLAND_COASTLINES,
     WIDTH,
     HEIGHT,
     LON_MIN, LAT_MIN, LON_MAX, LAT_MAX,
@@ -35,8 +36,8 @@ class TestCoastlineMask:
     def test_land_fraction_reasonable(self):
         mask = _build_coastline_mask()
         frac = mask.sum() / mask.size
-        # Puerto Rico island should cover 20–80% of the bounding box
-        assert 0.20 < frac < 0.80, f"Unexpected land fraction: {frac:.2f}"
+        # PR main island + 6 smaller islands inside a 3.4° × 4.0° box → small fraction
+        assert 0.05 < frac < 0.50, f"Unexpected land fraction: {frac:.2f}"
 
 
 class TestElevationGrid:
@@ -127,3 +128,32 @@ class TestSyntheticGeoTiff:
             data = src.read(1)
             land = data[data > 0]
             assert land.max() > 1000, f"Expected PR terrain above 1000 m, got {land.max():.0f}"
+
+
+class TestOffshoreIslands:
+    """Verify offshore island polygons produce land pixels in the mask."""
+
+    def _px(self, lon, lat):
+        from tools.generate_synthetic_dem import _lon_to_px, _lat_to_py
+        return int(_lon_to_px(lon)), int(_lat_to_py(lat))
+
+    def _check_island(self, lon, lat, name):
+        mask = _build_coastline_mask()
+        px, py = self._px(lon, lat)
+        assert mask[py, px], f"{name} centre pixel should be land"
+
+    def test_vieques(self):
+        self._check_island(-65.45, 18.13, "Vieques")
+
+    def test_culebra(self):
+        self._check_island(-65.28, 18.33, "Culebra")
+
+    def test_mona(self):
+        self._check_island(-67.89, 18.11, "Mona")
+
+    def test_island_coastlines_count(self):
+        assert len(ISLAND_COASTLINES) == 7  # PR main + 6 offshore
+
+    def test_bathymetry_features_have_trenches(self):
+        depths = [feat[2] for feat in BATHYMETRY_FEATURES]
+        assert min(depths) <= -8000, "PR Trench (~8376 m) should be represented"

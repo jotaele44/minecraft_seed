@@ -14,16 +14,16 @@ Minecraft version target: pre-1.18
   1.18+    → water level 63, max height 384  (update values above)
 
 Pixel value → terrain mapping:
-  Pixels  0 –  61  →  ocean depth (0 = deepest ~500 m, 61 = near surface)
+  Pixels  0 –  61  →  ocean depth (0 = deepest ~9000 m, 61 = near surface)
   Pixel   62        →  sea level / coastline
   Pixels  62 – 127  →  land elevation (0 m at coast → peak at 127)
 
 Scale conversion (block ↔ real world):
-  1 block (X/Z)    ≈ 185.9 m horizontal
+  1 block (X/Z)    ≈ 229.4 m horizontal
   1 block (Y) land  ≈ 20.58 m elevation
-  1 block (Y) ocean ≈ 8.06 m depth
+  1 block (Y) ocean ≈ 145.16 m depth
   Real-world land elevation  = (block_Y - 62) × 20.58 m
-  Real-world ocean depth     = (62 - block_Y) × 8.06 m
+  Real-world ocean depth     = (62 - block_Y) × 145.16 m
 
 Import steps (WorldPainter GUI):
   1. File > Import > Import Height Map...
@@ -40,9 +40,9 @@ CLI alternative (WorldPainter command-line):
                --config output/worldpainter/worldpainter_import.properties
 
 Computed spawn (set this in WorldPainter Spawn Point tool):
-  Block X = 776
+  Block X = 874
   Block Y = 63  (approximate surface; WorldPainter will adjust)
-  Block Z = 144
+  Block Z = 1173
   Region:  northeast quadrant (San Juan / Loíza area)
 
 Export:

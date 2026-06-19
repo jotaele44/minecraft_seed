@@ -179,7 +179,7 @@ class TestBathyNorm:
 
     SEA = 62
     MAX_H = 127
-    MAX_D = 500.0  # m
+    MAX_D = 9000.0  # m — matches config max_ocean_depth_m (covers full PR Trench)
 
     def _dual_norm(self, elev: float) -> float:
         """Mirror of the dual-normalisation formula in build_heightmap.main().
@@ -191,7 +191,7 @@ class TestBathyNorm:
         land_max = 1338.0
         S = self.SEA    # 62
         H = self.MAX_H  # 127
-        D = self.MAX_D  # 500.0
+        D = self.MAX_D  # 9000.0
         if elev < 0.0:
             return max(0.0, (elev + D) / D * (S / 255.0))
         else:

@@ -44,13 +44,13 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 OUT_FILE = RAW_DIR / "puerto_rico_official_dem.tif"
 
-# Puerto Rico main island bounding box (WGS84 / EPSG:4326)
-LON_MIN, LON_MAX = -67.30, -65.59
-LAT_MIN, LAT_MAX = 17.88, 18.55
+# Extended bounding box — captures PR Trench (N), Muertos Trough (S), and offshore islands
+LON_MIN, LON_MAX = -68.3, -64.9
+LAT_MIN, LAT_MAX =  16.5, 20.5
 
 # Raster grid dimensions
 WIDTH  = 2048
-# HEIGHT ≈ 802 pixels  (2048 × (18.55-17.88) / (67.30-65.59) ≈ 2048 × 0.67/1.71)
+# HEIGHT ≈ 2410 pixels  (2048 × (20.5-16.5) / (68.3-64.9) ≈ 2048 × 4.0/3.4)
 HEIGHT = max(1, int(round(WIDTH * (LAT_MAX - LAT_MIN) / (LON_MAX - LON_MIN))))
 
 # ---------------------------------------------------------------------------
@@ -100,6 +100,50 @@ PR_COASTLINE = [
 ]
 
 # ---------------------------------------------------------------------------
+# Offshore island coastline polygons (simplified convex/concave hulls)
+# ---------------------------------------------------------------------------
+VIEQUES_COASTLINE = [           # ~34 km × 7 km, E-W oriented
+    (-65.65, 18.14), (-65.55, 18.16), (-65.40, 18.16), (-65.25, 18.14),
+    (-65.25, 18.11), (-65.40, 18.10), (-65.55, 18.10), (-65.65, 18.12),
+    (-65.65, 18.14),
+]
+
+CULEBRA_COASTLINE = [           # ~11 km × 7 km
+    (-65.35, 18.34), (-65.28, 18.36), (-65.23, 18.33),
+    (-65.25, 18.28), (-65.33, 18.27), (-65.35, 18.34),
+]
+
+MONA_COASTLINE = [              # ~10 km × 12 km flat plateau
+    (-67.95, 18.08), (-67.90, 18.17), (-67.83, 18.16),
+    (-67.83, 18.06), (-67.88, 18.04), (-67.95, 18.08),
+]
+
+DESECHEO_COASTLINE = [          # ~2 km × 1 km
+    (-67.50, 18.38), (-67.47, 18.39), (-67.46, 18.38),
+    (-67.47, 18.37), (-67.50, 18.37), (-67.50, 18.38),
+]
+
+CAJA_DE_MUERTOS_COASTLINE = [   # ~3.5 km × 1.5 km
+    (-66.54, 17.90), (-66.49, 17.90),
+    (-66.49, 17.88), (-66.54, 17.88), (-66.54, 17.90),
+]
+
+PALOMINO_COASTLINE = [          # ~2 km × 0.7 km
+    (-65.64, 18.36), (-65.61, 18.36),
+    (-65.61, 18.34), (-65.64, 18.34), (-65.64, 18.36),
+]
+
+ISLAND_COASTLINES = [
+    PR_COASTLINE,
+    VIEQUES_COASTLINE,
+    CULEBRA_COASTLINE,
+    MONA_COASTLINE,
+    DESECHEO_COASTLINE,
+    CAJA_DE_MUERTOS_COASTLINE,
+    PALOMINO_COASTLINE,
+]
+
+# ---------------------------------------------------------------------------
 # Terrain features: (lon, lat, elevation_m, sigma_deg)
 # sigma_deg = Gaussian half-width in degrees (larger = broader hill)
 # ---------------------------------------------------------------------------
@@ -141,6 +185,14 @@ TERRAIN_FEATURES = [
     (-66.350, 17.975,   20, 0.080),
     (-67.150, 18.100,   15, 0.060),
     (-65.750, 18.340,   30, 0.040),
+    # Offshore island peaks
+    (-65.450, 18.130,   99, 0.025),  # Vieques — Monte Pirata
+    (-65.550, 18.120,   80, 0.020),  # Vieques — secondary hill
+    (-65.270, 18.310,  193, 0.020),  # Culebra — Monte Resaca
+    (-67.890, 18.110,   80, 0.040),  # Mona Island plateau
+    (-67.480, 18.380,  143, 0.010),  # Desecheo
+    (-66.520, 17.890,   60, 0.010),  # Caja de Muertos
+    (-65.620, 18.350,   40, 0.008),  # Palomino
 ]
 
 # ---------------------------------------------------------------------------
@@ -151,20 +203,31 @@ TERRAIN_FEATURES = [
 # range; depths modelled here represent the shelf and upper Caribbean basin.
 # ---------------------------------------------------------------------------
 BATHYMETRY_FEATURES = [
-    # Northern continental shelf (within ~6 km of north coast at box top)
-    (-66.50, 18.56, -180, 0.07),
-    (-66.00, 18.56, -150, 0.07),
-    (-67.00, 18.55, -120, 0.06),
-    (-65.75, 18.54, -140, 0.06),
-    # Southern Caribbean basin (bottom edge of bounding box)
-    (-66.50, 17.89, -420, 0.10),
-    (-66.00, 17.89, -380, 0.10),
-    (-66.80, 17.89, -350, 0.08),
-    (-65.80, 17.90, -320, 0.08),
-    # East shelf (minimal ocean strip inside bounding box)
-    (-65.60, 18.20, -300, 0.07),
-    # West (Mona Passage area)
-    (-67.29, 18.20, -250, 0.07),
+    # Puerto Rico Trench — axis ~19.5°N, deepest point 8376 m
+    (-66.50, 19.50, -8376, 0.15),
+    (-67.00, 19.48, -7000, 0.12),
+    (-65.80, 19.45, -6500, 0.12),
+    (-66.20, 19.42, -7500, 0.13),
+    (-65.30, 19.35, -5000, 0.10),   # eastern end, shallower
+    # Muertos Trough — axis ~17.3°N, ~5000 m deep
+    (-66.50, 17.30, -5000, 0.12),
+    (-66.00, 17.35, -4600, 0.10),
+    (-65.80, 17.40, -4000, 0.10),
+    # Caribbean basin south of PR (between island and Muertos Trough)
+    (-66.50, 17.88, -3500, 0.10),
+    (-66.00, 17.88, -3200, 0.10),
+    (-66.80, 17.88, -3000, 0.08),
+    (-65.80, 17.90, -2800, 0.08),
+    # Northern shelf (narrow zone between PR north coast and PR Trench)
+    (-66.50, 18.70,  -500, 0.08),
+    (-66.00, 18.70,  -400, 0.08),
+    (-67.00, 18.68,  -350, 0.07),
+    (-65.75, 18.65,  -450, 0.07),
+    # Atlantic east of PR / Culebra area
+    (-65.10, 18.50, -2500, 0.10),
+    # Mona Passage (west, between PR and Hispaniola)
+    (-67.80, 18.30, -1000, 0.10),
+    (-68.10, 18.20, -1500, 0.10),
 ]
 
 
@@ -178,10 +241,11 @@ def _lat_to_py(lat: float) -> float:
 
 
 def _build_coastline_mask() -> np.ndarray:
-    poly_px = [(_lon_to_px(lon), _lat_to_py(lat)) for lon, lat in PR_COASTLINE]
     img = Image.new("1", (WIDTH, HEIGHT), 0)
     draw = ImageDraw.Draw(img)
-    draw.polygon(poly_px, fill=1, outline=1)
+    for coastline in ISLAND_COASTLINES:
+        poly_px = [(_lon_to_px(lon), _lat_to_py(lat)) for lon, lat in coastline]
+        draw.polygon(poly_px, fill=1, outline=1)
     return np.array(img, dtype=bool)
 
 
@@ -261,10 +325,9 @@ def main() -> None:
         f"ELEV_MAX={elev_max:.2f}",
         f"BATHY_MIN={bathy_min:.2f}",
         f"BATHY_MAX={bathy_max:.2f}",
-        "NOTE=Coastline from 34 cartographic reference points",
+        "NOTE=Coastline from PR main island + 6 offshore islands (Vieques, Culebra, Mona, Desecheo, Caja de Muertos, Palomino)",
         "NOTE=Land elevation from Gaussian peaks at known locations",
-        "NOTE=Ocean depth from Gaussian wells (continental shelf + basin approximation)",
-        "NOTE=Puerto Rico Trench (~8400 m, 19.5°N) is north of bounding box — not modelled",
+        "NOTE=Ocean depth from Gaussian wells (PR Trench 8376m N, Muertos Trough 5000m S, Caribbean basin)",
         "NOTE=Replace with official NOAA CUDEM or USGS 3DEP DEM for production quality",
     ]
     tmp = LOG_DIR / "source_audit.tmp"
