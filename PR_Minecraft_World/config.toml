@@ -11,7 +11,8 @@ chunk_bytes = 1048576
 
 [heightmap]
 # Maximum output dimension in pixels (preserves aspect ratio)
-target_max_dim = 2048
+# 1024 = 50% miniature scale (~176 m/block horizontal)
+target_max_dim = 1024
 # Output bit depth: 8 (compatible, 256 levels) or 16 (better precision, 65536 levels)
 bits = 8
 # Resampling algorithm for reprojection: bilinear | nearest | cubic
@@ -22,7 +23,8 @@ resampling = "bilinear"
 # "1.18+"     → sea level 63, world height -64–320
 version = "pre-1.18"
 sea_level_block = 62
-max_height = 255
+# 127 = 50% of 255-block range → ~10.5 m/block vertical (Cerro Punta 1338 m → 127 blocks)
+max_height = 127
 
 [spawn]
 # Quadrant to search for a safe land spawn: northeast | northwest | southeast | southwest | center

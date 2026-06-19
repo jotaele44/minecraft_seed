@@ -12,7 +12,7 @@ NOTE=Coastline from 34 cartographic reference points
 NOTE=Elevation from Gaussian peaks at known locations
 NOTE=Replace with official NOAA CUDEM or USGS 3DEP DEM for production quality
 
---- RUN 2026-06-19T00:31:13Z ---
+--- RUN 2026-06-19T00:58:35Z ---
 INPUT=data/raw/puerto_rico_official_dem.tif
 CRS=EPSG:4326
 WIDTH=2048
@@ -23,8 +23,8 @@ CRS_ASSUMED=False
 MIN=1.5033
 MAX=1337.9680
 LAND_MAX=1337.9680
-OUTPUT_WIDTH=2033
-OUTPUT_HEIGHT=839
-SPAWN_X=1533
-SPAWN_Z=286
+OUTPUT_WIDTH=1024
+OUTPUT_HEIGHT=423
+SPAWN_X=772
+SPAWN_Z=144
 OUTPUT_FILE=output/heightmap/puerto_rico_heightmap.png

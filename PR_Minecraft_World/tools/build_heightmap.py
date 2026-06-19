@@ -147,6 +147,9 @@ def _write_worldpainter_settings(
     sea_level: int,
     max_height: int,
     mc_version: str,
+    m_per_block_x: float = 0.0,
+    m_per_block_z: float = 0.0,
+    m_per_block_y: float = 0.0,
 ) -> None:
     lines = [
         "WorldPainter Heightmap Import Settings",
@@ -163,6 +166,12 @@ def _write_worldpainter_settings(
         f"Minecraft version target: {mc_version}",
         "  pre-1.18 → water level 62, max height 255",
         "  1.18+    → water level 63, max height 384  (update values above)",
+        "",
+        "Scale conversion (block ↔ real world):",
+        f"  1 block (X/Z) ≈ {m_per_block_x:.1f} m horizontal",
+        f"  1 block (Y)   ≈ {m_per_block_y:.2f} m elevation",
+        f"  Real-world distance = block_count × {m_per_block_x:.1f} m",
+        f"  Real-world elevation = (block_Y - {sea_level}) × {m_per_block_y:.2f} m",
         "",
         "Import steps (WorldPainter GUI):",
         "  1. File > Import > Import Height Map...",
@@ -386,6 +395,21 @@ def main(bits_override: int | None = None) -> None:
     log.info("  Spawn: block X=%d, Y=%d, Z=%d", spawn_px, spawn_y, spawn_pz)
 
     # -----------------------------------------------------------------
+    # Scale conversion factors (block ↔ real-world metres)
+    # The reprojected raster spans the bounding box in EPSG:3857 metres.
+    # Dividing that span by the output pixel count gives m/block.
+    # -----------------------------------------------------------------
+    reproj_width_m  = abs(transform.c + transform.a * rp_w - transform.c)
+    reproj_height_m = abs(transform.f + transform.e * rp_h - transform.f)
+    m_per_block_x = reproj_width_m  / img8.width  if img8.width  > 0 else 0.0
+    m_per_block_z = reproj_height_m / img8.height if img8.height > 0 else 0.0
+    m_per_block_y = land_max / max_height if max_height > 0 else 0.0
+    log.info(
+        "  Scale: %.1f m/block (X), %.1f m/block (Z), %.2f m/block (Y)",
+        m_per_block_x, m_per_block_z, m_per_block_y,
+    )
+
+    # -----------------------------------------------------------------
     # Metadata (relative paths)
     # -----------------------------------------------------------------
     metadata = {
@@ -402,6 +426,15 @@ def main(bits_override: int | None = None) -> None:
         "spawn_x": spawn_px,
         "spawn_y": spawn_y,
         "spawn_z": spawn_pz,
+        "scale": {
+            "m_per_block_x": round(m_per_block_x, 2),
+            "m_per_block_z": round(m_per_block_z, 2),
+            "m_per_block_y": round(m_per_block_y, 4),
+            "description": (
+                "Multiply block coords by m_per_block_x/z/y to get real-world metres. "
+                "E.g. block_x * m_per_block_x = easting metres from west edge of island."
+            ),
+        },
         "notes": [
             "Underwater and nodata cells forced to 0 baseline (ocean)",
             "Land elevation normalised: 0 m → pixel 0, land_max_m → pixel 255 (8-bit) / 65535 (16-bit)",
@@ -444,6 +477,9 @@ def main(bits_override: int | None = None) -> None:
         sea_level=sea_level,
         max_height=max_height,
         mc_version=mc_version,
+        m_per_block_x=m_per_block_x,
+        m_per_block_z=m_per_block_z,
+        m_per_block_y=m_per_block_y,
     )
 
     log.info("\nHEIGHTMAP_OK")
