@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+import rasterio.crs
 from rasterio.enums import Resampling as RasterioResampling
 from rasterio.warp import calculate_default_transform, reproject
 from PIL import Image
@@ -253,6 +254,24 @@ def main(bits_override: int | None = None) -> None:
         f"BOUNDS={src.bounds}",
     ]
 
+    # NOAA NetCDF files (e.g. crm_vol9.nc) often have no embedded CRS.
+    # If the bounds fall within WGS84 lat/lon range, assume EPSG:4326.
+    if src.crs is None:
+        b = src.bounds
+        if -180 <= b.left <= 180 and -90 <= b.bottom <= 90:
+            log.warning(
+                "Source raster has no CRS; bounds %s look like WGS84 — assuming EPSG:4326.", b
+            )
+            _src_crs = rasterio.crs.CRS.from_epsg(4326)
+        else:
+            _fail(
+                "Source raster has no embedded CRS and bounds don't look like lat/lon. "
+                "Cannot reproject."
+            )
+    else:
+        _src_crs = src.crs
+    audit.append(f"CRS_ASSUMED={src.crs is None}")
+
     # Memory warning for large files
     file_mb = in_raster.stat().st_size / (1 << 20)
     if file_mb > 500:
@@ -274,10 +293,10 @@ def main(bits_override: int | None = None) -> None:
     # -----------------------------------------------------------------
     dst_crs = "EPSG:3857"
     transform, rp_w, rp_h = calculate_default_transform(
-        src.crs, dst_crs, src.width, src.height, *src.bounds
+        _src_crs, dst_crs, src.width, src.height, *src.bounds
     )
     src_transform = src.transform
-    src_crs = src.crs
+    src_crs = _src_crs
     src.close()
 
     reproj = np.full((rp_h, rp_w), np.nan, dtype="float32")
