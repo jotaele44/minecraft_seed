@@ -2,8 +2,10 @@
 # All values here are overrides; hardcoded defaults live in tools/_config.py.
 
 [dem]
-# Puerto Rico bounding box: "lon_min,lat_min,lon_max,lat_max"
-bbox = "-67.35,17.85,-65.20,18.55"
+# Extended bounding box: covers PR main island, PR Trench (N), Muertos Trough (S),
+# and offshore islands (Vieques, Culebra, Mona, Desecheo, Caja de Muertos, Palomino)
+# "lon_min,lat_min,lon_max,lat_max"
+bbox = "-68.30,16.50,-64.90,20.50"
 # Seconds before a download request times out
 fetch_timeout_s = 120
 # Download chunk size in bytes (1 MiB)

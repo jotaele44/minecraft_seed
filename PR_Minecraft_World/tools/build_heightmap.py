@@ -154,7 +154,63 @@ def _write_worldpainter_settings(
     m_per_block_y_land: float = 0.0,
     m_per_block_y_ocean: float = 0.0,
     max_ocean_depth_m: float = 0.0,
+    bounds_wgs84: tuple[float, float, float, float] | None = None,
+    img_w: int = 0,
+    img_h: int = 0,
 ) -> None:
+    # Compute spawn lat/lon description if geographic bounds are available
+    if bounds_wgs84 and img_w and img_h:
+        lon_min, lat_min, lon_max, lat_max = bounds_wgs84
+        spawn_lon = lon_min + (spawn_x / img_w) * (lon_max - lon_min)
+        spawn_lat = lat_max - (spawn_z / img_h) * (lat_max - lat_min)
+        spawn_region = f"approx. {abs(spawn_lon):.2f}°W, {spawn_lat:.2f}°N"
+    else:
+        spawn_region = "Puerto Rico main island"
+
+    # Build notable locations table from known geographic reference points
+    notable_lines: list[str] = []
+    if bounds_wgs84 and img_w and img_h:
+        lon_min, lat_min, lon_max, lat_max = bounds_wgs84
+        lon_span = lon_max - lon_min
+        lat_span = lat_max - lat_min
+
+        def _bx(lon: float, lat: float) -> tuple[int, int]:
+            x = int((lon - lon_min) / lon_span * img_w)
+            z = int((lat_max - lat) / lat_span * img_h)
+            return max(0, min(img_w - 1, x)), max(0, min(img_h - 1, z))
+
+        LOCATIONS = [
+            ("Cerro Punta (1338 m, peak)", -66.593, 18.173, "Highest point, Cordillera Central"),
+            ("El Yunque (1065 m)",         -65.787, 18.292, "Rainforest peak, NE Puerto Rico"),
+            ("San Juan (capital)",          -66.115, 18.460, "North coast capital"),
+            ("Ponce (south coast)",         -66.614, 17.997, "Second-largest city"),
+            ("PR Trench axis (~8376 m)",   -66.500, 19.500, "Deepest Atlantic point, pixel ~4"),
+            ("Muertos Trough (~5000 m)",   -66.500, 17.300, "Southern deep basin, pixel ~28"),
+            ("Vieques Island",             -65.450, 18.130, "East of PR (Monte Pirata 99 m)"),
+            ("Culebra Island",             -65.280, 18.310, "NE of PR (Monte Resaca 193 m)"),
+            ("Mona Island",                -67.890, 18.110, "West of PR (flat plateau ~80 m)"),
+        ]
+        notable_lines = ["Notable locations (approximate block coordinates):"]
+        notable_lines.append(
+            f"  {'Feature':<32}  {'Block X':>7}  {'Block Z':>7}  Notes"
+        )
+        notable_lines.append("  " + "-" * 72)
+        for name, lon, lat, note in LOCATIONS:
+            bx, bz = _bx(lon, lat)
+            notable_lines.append(f"  {name:<32}  {bx:>7}  {bz:>7}  {note}")
+
+        lon_min_fmt = f"{abs(lon_min):.1f}"
+        lon_max_fmt = f"{abs(lon_max):.1f}"
+        lat_max_fmt = f"{lat_max:.1f}"
+        notable_lines += [
+            "",
+            "Coordinate conversion (block ↔ real world):",
+            f"  longitude = -{lon_min_fmt} + (block_X / {img_w}) × {lon_span:.1f}",
+            f"  latitude  = {lat_max_fmt}  - (block_Z / {img_h}) × {lat_span:.1f}",
+            f"  block_X   = (lon + {lon_min_fmt}) / {lon_span:.1f} × {img_w}",
+            f"  block_Z   = ({lat_max_fmt} - lat) / {lat_span:.1f} × {img_h}",
+        ]
+
     lines = [
         "WorldPainter Heightmap Import Settings",
         "======================================",
@@ -201,6 +257,8 @@ def _write_worldpainter_settings(
             ]
         ),
         "",
+        *notable_lines,
+        *([""] if notable_lines else []),
         "Import steps (WorldPainter GUI):",
         "  1. File > Import > Import Height Map...",
         f"  2. Select: output/heightmap/{hm_name}",
@@ -219,7 +277,7 @@ def _write_worldpainter_settings(
         f"  Block X = {spawn_x}",
         f"  Block Y = {spawn_y}  (approximate surface; WorldPainter will adjust)",
         f"  Block Z = {spawn_z}",
-        "  Region:  northeast quadrant (San Juan / Loíza area)",
+        f"  Region:  {spawn_region}",
         "",
         "Export:",
         "  File > Export > Export as Minecraft world...",
@@ -334,6 +392,16 @@ def main(bits_override: int | None = None) -> None:
     )
     src_transform = src.transform
     src_crs = _src_crs
+    # Capture WGS84 bounds for import_settings.txt coordinate table.
+    # If source was already EPSG:4326 its bounds are directly usable; otherwise transform.
+    _src_b = src.bounds
+    if _src_crs.to_epsg() == 4326:
+        _wgs84_bounds = (_src_b.left, _src_b.bottom, _src_b.right, _src_b.top)
+    else:
+        from rasterio.warp import transform_bounds
+        _l, _b, _r, _t = transform_bounds(_src_crs, "EPSG:4326",
+                                           _src_b.left, _src_b.bottom, _src_b.right, _src_b.top)
+        _wgs84_bounds = (_l, _b, _r, _t)
     src.close()
 
     reproj = np.full((rp_h, rp_w), np.nan, dtype="float32")
@@ -565,6 +633,9 @@ def main(bits_override: int | None = None) -> None:
         m_per_block_y_land=m_per_block_y_land,
         m_per_block_y_ocean=m_per_block_y_ocean or 0.0,
         max_ocean_depth_m=max_ocean_depth if include_bathy else 0.0,
+        bounds_wgs84=_wgs84_bounds,
+        img_w=img8.width,
+        img_h=img8.height,
     )
 
     log.info("\nHEIGHTMAP_OK")

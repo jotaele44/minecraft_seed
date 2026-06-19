@@ -25,6 +25,25 @@ Scale conversion (block ↔ real world):
   Real-world land elevation  = (block_Y - 62) × 20.58 m
   Real-world ocean depth     = (62 - block_Y) × 145.16 m
 
+Notable locations (approximate block coordinates):
+  Feature                           Block X  Block Z  Notes
+  ------------------------------------------------------------------------
+  Cerro Punta (1338 m, peak)            828     1191  Highest point, Cordillera Central
+  El Yunque (1065 m)                   1219     1130  Rainforest peak, NE Puerto Rico
+  San Juan (capital)                   1060     1044  North coast capital
+  Ponce (south coast)                   818     1281  Second-largest city
+  PR Trench axis (~8376 m)              873      512  Deepest Atlantic point, pixel ~4
+  Muertos Trough (~5000 m)              873     1638  Southern deep basin, pixel ~28
+  Vieques Island                       1383     1213  East of PR (Monte Pirata 99 m)
+  Culebra Island                       1465     1121  NE of PR (Monte Resaca 193 m)
+  Mona Island                           198     1223  West of PR (flat plateau ~80 m)
+
+Coordinate conversion (block ↔ real world):
+  longitude = -68.3 + (block_X / 1650) × 3.4
+  latitude  = 20.5  - (block_Z / 2048) × 4.0
+  block_X   = (lon + 68.3) / 3.4 × 1650
+  block_Z   = (20.5 - lat) / 4.0 × 2048
+
 Import steps (WorldPainter GUI):
   1. File > Import > Import Height Map...
   2. Select: output/heightmap/puerto_rico_heightmap.png
@@ -43,7 +62,7 @@ Computed spawn (set this in WorldPainter Spawn Point tool):
   Block X = 874
   Block Y = 63  (approximate surface; WorldPainter will adjust)
   Block Z = 1173
-  Region:  northeast quadrant (San Juan / Loíza area)
+  Region:  approx. 66.50°W, 18.21°N
 
 Export:
   File > Export > Export as Minecraft world...

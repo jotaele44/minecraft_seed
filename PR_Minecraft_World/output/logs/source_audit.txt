@@ -15,7 +15,7 @@ NOTE=Land elevation from Gaussian peaks at known locations
 NOTE=Ocean depth from Gaussian wells (PR Trench 8376m N, Muertos Trough 5000m S, Caribbean basin)
 NOTE=Replace with official NOAA CUDEM or USGS 3DEP DEM for production quality
 
---- RUN 2026-06-19T12:31:02Z ---
+--- RUN 2026-06-19T12:58:59Z ---
 INPUT=data/raw/puerto_rico_official_dem.tif
 CRS=EPSG:4326
 WIDTH=2048
