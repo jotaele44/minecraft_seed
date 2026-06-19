@@ -1,0 +1,14 @@
+# Python virtual environment
+.venv/
+
+# Large raw DEM source files (re-fetch with fetch_dem.py)
+data/raw/*.tif
+data/raw/*.tiff
+data/raw/*.nc
+data/raw/*.img
+data/raw/*.zip
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

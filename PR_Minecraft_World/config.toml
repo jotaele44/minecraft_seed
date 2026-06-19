@@ -1,0 +1,38 @@
+# Runtime configuration for the Puerto Rico Minecraft pipeline.
+# All values here are overrides; hardcoded defaults live in tools/_config.py.
+
+[dem]
+# Extended bounding box: covers PR main island, PR Trench (N), Muertos Trough (S),
+# and offshore islands (Vieques, Culebra, Mona, Desecheo, Caja de Muertos, Palomino)
+# "lon_min,lat_min,lon_max,lat_max"
+bbox = "-68.30,16.50,-64.90,20.50"
+# Seconds before a download request times out
+fetch_timeout_s = 120
+# Download chunk size in bytes (1 MiB)
+chunk_bytes = 1048576
+
+[heightmap]
+# Maximum output dimension in pixels (preserves aspect ratio)
+# 2048 keeps PR main island at ~924 px wide inside the expanded bounding box
+target_max_dim = 2048
+# Output bit depth: 8 (compatible, 256 levels) or 16 (better precision, 65536 levels)
+bits = 8
+# Resampling algorithm for reprojection: bilinear | nearest | cubic
+resampling = "bilinear"
+# Include seafloor bathymetry in the heightmap
+# Pixels 0–(sea_level-1) = ocean depth, pixel sea_level = coast, sea_level–max_height = land
+include_bathymetry = true
+# Ocean depths beyond this value are clamped (9000 m covers full PR Trench at 8376 m)
+max_ocean_depth_m = 9000
+
+[minecraft]
+# "pre-1.18"  → sea level 62, world height 0–255
+# "1.18+"     → sea level 63, world height -64–320
+version = "pre-1.18"
+sea_level_block = 62
+# 127 = 50% of 255-block range → ~10.5 m/block vertical (Cerro Punta 1338 m → 127 blocks)
+max_height = 127
+
+[spawn]
+# Quadrant to search for a safe land spawn: northeast | northwest | southeast | southwest | center
+quadrant = "northeast"

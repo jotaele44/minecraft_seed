@@ -1,0 +1,33 @@
+SOURCE=SYNTHETIC (network unavailable; modeled from known geographic features)
+GENERATOR=tools/generate_synthetic_dem.py
+FILE=puerto_rico_official_dem.tif
+SIZE_BYTES=19749366
+CRS=EPSG:4326
+WIDTH=2048
+HEIGHT=2409
+BOUNDS=(-68.3, 16.5, -64.9, 20.5)
+ELEV_MIN=0.00
+ELEV_MAX=1337.95
+BATHY_MIN=-8375.96
+BATHY_MAX=-0.00
+NOTE=Coastline from PR main island + 6 offshore islands (Vieques, Culebra, Mona, Desecheo, Caja de Muertos, Palomino)
+NOTE=Land elevation from Gaussian peaks at known locations
+NOTE=Ocean depth from Gaussian wells (PR Trench 8376m N, Muertos Trough 5000m S, Caribbean basin)
+NOTE=Replace with official NOAA CUDEM or USGS 3DEP DEM for production quality
+
+--- RUN 2026-06-19T12:58:59Z ---
+INPUT=data/raw/puerto_rico_official_dem.tif
+CRS=EPSG:4326
+WIDTH=2048
+HEIGHT=2409
+NODATA=-9999.0
+BOUNDS=BoundingBox(left=-68.3, bottom=16.5, right=-64.9, top=20.5)
+CRS_ASSUMED=False
+MIN=-8375.8066
+MAX=1337.6844
+LAND_MAX=1337.6844
+OUTPUT_WIDTH=1650
+OUTPUT_HEIGHT=2048
+SPAWN_X=874
+SPAWN_Z=1173
+OUTPUT_FILE=output/heightmap/puerto_rico_heightmap.png
